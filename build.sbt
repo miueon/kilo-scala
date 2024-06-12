@@ -14,4 +14,8 @@ nativeConfig ~= { c =>
   c.withLTO(LTO.none) // thin
     .withMode(Mode.debug) // releaseFast
     .withGC(GC.immix) // commix
+    .withMultithreading(true)
 }
+
+ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
+ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test
