@@ -6,6 +6,7 @@ import scala.util.control.NonFatal
 import par.Par
 import cats.Monad
 import cats.syntax.all.*
+import cats.MonadThrow
 
 /*
  * `Task[A]` is an opaque type around `IO[Try[A]]` which is
@@ -32,6 +33,10 @@ object Task:
         case Failure(e) => t2
         case a          => IO(a)
 
+    def asIO: IO[A] = IO.monad.flatMap(self):
+      case Failure(e) => throw e
+      case Success(a) => IO.now(a)
+
     def unsafeRunSync(es: ExecutorService): A = IO.unsafeRunSync(self)(es).get
 
     def unsafeAttemptRunSync(es: ExecutorService): Try[A] =
@@ -52,7 +57,7 @@ object Task:
 
   def forkUnit[A](a: => A): Task[A] = fork(now(a))
 
-  given monad: Monad[Task] with
+  given monad: MonadThrow[Task] with
     def pure[A](x: A): Task[A] = Task(x)
     def flatMap[A, B](fa: Task[A])(f: A => Task[B]): Task[B] =
       IO.monad.flatMap(fa) {
@@ -64,3 +69,6 @@ object Task:
         case Left(a)  => tailRecM(a)(f)
         case Right(b) => Task(b)
       }
+    def handleErrorWith[A](fa: Task[A])(f: Throwable => Task[A]): Task[A] = fa.handleErrorWith(f)
+
+    def raiseError[A](e: Throwable): Task[A] = Task.raiseError(e)

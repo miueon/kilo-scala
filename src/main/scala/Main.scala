@@ -7,6 +7,7 @@ import scala.util.Try
 import cats.syntax.all.*
 import cats.Monad
 import java.nio.charset.Charset
+import cats.MonadThrow
 case class Player(name: String, score: Int)
 
 // def winnerMsg(p: Option[Player]): String = p
@@ -27,7 +28,7 @@ case class Player(name: String, score: Int)
 //     contest(Player("Alice", 60), Player("Bob", 50))
 // }
 
-trait AlgInterp[F[_]]:
+trait AlgInterp[F[_]: MonadThrow]:
   def readLine(): F[Option[String]]
   def printLine(str: String): F[Unit]
 
@@ -44,18 +45,22 @@ object Main extends IOApp:
     val buffer = stackalloc[Byte](1024)
     val line = stdio.fgets(buffer, 1024, stdio.stdin)
     fromCString(line)
-  val interp = new AlgInterp[IO] {
-    def printLine(str: String): IO[Unit] =
+  val interp = new AlgInterp[Task]:
+    def printLine(str: String): Task[Unit] =
       // var cstr = Zone(toCString(str))
-      IO.forkUnit(stdio.printf(c"%s\n", Zone(toCString(str))))
+      Task
+        .forkUnit {
+          stdio.printf(c"%s\n", Zone(toCString(str)))
+        } 
+        >> Task.delay(throw new RuntimeException("Zhuo jiajia's pussy is smelly"))
+        .handleError(e => println(e.getMessage))
       // Zone {
       //   IO.fork(stdio.printf(c"%s\n", toCString(str)))
       // }
       // IO.forkUnit(println(str))
-    def readLine(): IO[Option[String]] =
+    def readLine(): Task[Option[String]] =
       // IO(Try(readCLine()).toOption)
-      IO.forkUnit(readCLine().some)
-  }
+      Task.forkUnit(readCLine().some)
 
   def program[F[_]: Monad]: Alg[F, Unit] =
     for
@@ -64,4 +69,5 @@ object Main extends IOApp:
       _ <- printLine(s"Hello $name")
     yield ()
   def pureMain(args: List[String]): IO[Unit] =
-    program[IO].run(interp)
+    program[Task].run(interp).asIO
+end Main

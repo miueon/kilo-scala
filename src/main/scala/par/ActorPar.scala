@@ -6,6 +6,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.Executors
 import cats.Monad
+import cats.Applicative
 
 opaque type Future[+A] = (A => Unit) => Unit
 opaque type Par[+A] = ExecutorService => Future[A]
@@ -19,6 +20,11 @@ object Par:
         case Left(a)  => tailRecM(a)(f)
         case Right(b) => Par.unit(b)
       }
+
+  given parApplicative: Applicative[Par] with
+    def ap[A, B](ff: Par[A => B])(fa: Par[A]): Par[B] =
+      ff.map2(fa)((f, a) => f(a))
+    def pure[A](x: A): Par[A] = lazyUnit(x)
   def unit[A](a: A): Par[A] =
     es => cb => cb(a)
 
@@ -114,3 +120,5 @@ object Par:
 
           pa(es)(a => combiner ! Left(a))
           p2(es)(b => combiner ! Right(b))
+  end extension
+end Par
