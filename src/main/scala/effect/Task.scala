@@ -3,10 +3,11 @@ package effect
 import java.util.concurrent.ExecutorService
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
-import par.Par
+import par.gear.Par
 import cats.Monad
 import cats.syntax.all.*
 import cats.MonadThrow
+import gears.async.Async
 
 /*
  * `Task[A]` is an opaque type around `IO[Try[A]]` which is
@@ -37,10 +38,10 @@ object Task:
       case Failure(e) => throw e
       case Success(a) => IO.now(a)
 
-    def unsafeRunSync(es: ExecutorService): A = IO.unsafeRunSync(self)(es).get
+    def unsafeRunSync(using Async): A = IO.unsafeRunSync(self).get
 
-    def unsafeAttemptRunSync(es: ExecutorService): Try[A] =
-      try IO.unsafeRunSync(self)(es)
+    def unsafeAttemptRunSync(using Async): Try[A] =
+      try IO.unsafeRunSync(self)
       catch case NonFatal(t) => Failure(t)
 
   def apply[A](a: => A): Task[A] = IO(Try(a))

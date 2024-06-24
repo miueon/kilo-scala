@@ -1,5 +1,5 @@
 scalaVersion := "3.4.2" // A Long Term Support version.
-ThisBuild / usePipelining := true
+// ThisBuild / usePipelining := true
 
 enablePlugins(ScalaNativePlugin)
 
@@ -18,4 +18,6 @@ nativeConfig ~= { c =>
 }
 
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
+ThisBuild / libraryDependencies += "ch.epfl.lamp" %%% "gears" % "0.2.0"
+
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test

@@ -49,10 +49,10 @@ object Main extends IOApp:
     def printLine(str: String): Task[Unit] =
       // var cstr = Zone(toCString(str))
       Task
-        .forkUnit {
+        .delay {
           stdio.printf(c"%s\n", Zone(toCString(str)))
-        } 
-        >> Task.delay(throw new RuntimeException("Zhuo jiajia's pussy is smelly"))
+          throw java.lang.RuntimeException("test")
+        }
         .handleError(e => println(e.getMessage))
       // Zone {
       //   IO.fork(stdio.printf(c"%s\n", toCString(str)))

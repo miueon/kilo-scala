@@ -3,13 +3,17 @@ package effect
 import cats.Monad
 import cats.syntax.all.*
 import effect.free.Free
-import par.Par
+import par.gear.Par
+import par.gear.Par.{*, given}
+
+import gears.async.*
 
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ForkJoinPool
 import scala.io.StdIn.*
 import cats.MonadError
+import gears.async.default.given
 
 opaque type IO[A] = Free[Par, A]
 
@@ -29,8 +33,8 @@ object IO:
   def forkUnit[A](a: => A): IO[A] = fork(now(a))
 
   extension [A](ioa: IO[A])
-    def unsafeRunSync(pool: ExecutorService): A =
-      ioa.run.run(pool)
+    def unsafeRunSync(using Async): A =
+      ioa.run.run
 
   given monad: Monad[IO] with
     def pure[A](x: A): IO[A] = IO(x)
@@ -42,7 +46,7 @@ object IO:
       }
 trait IOApp:
   def main(args: Array[String]): Unit =
-    val pool = ForkJoinPool()
-    pureMain(args.toList).unsafeRunSync(pool)
+    Async.blocking:
+      pureMain(args.toList).unsafeRunSync
 
   def pureMain(args: List[String]): IO[Unit]
