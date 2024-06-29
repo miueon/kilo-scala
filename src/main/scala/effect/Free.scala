@@ -1,5 +1,6 @@
 package effect.free
 
+import effect.*
 import cats.Monad
 import cats.syntax.all.*
 import par.Par
@@ -9,7 +10,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ForkJoinPool
 import scala.util.Try
 
-infix type ~>[F[_], G[_]] = [x] => F[x] => G[x]
 
 enum Free[+F[_], A]:
   case Return(a: A) extends Free[Nothing, A]
@@ -18,7 +18,6 @@ enum Free[+F[_], A]:
       s: Free[F, A],
       f: A => Free[F, B]
   ) extends Free[F, B]
-  case Error(e: Throwable) extends Free[Nothing, A]
 
   def flatMap[F2[x] >: F[x], B](f: A => Free[F2, B]): Free[F2, B] =
     FlatMap(this, f)
@@ -32,7 +31,6 @@ enum Free[+F[_], A]:
   def run[F2[x] >: F[x]](using F: Monad[F2]): F2[A] = step match
     case Return(a)   => F.pure(a)
     case Suspend(fa) => fa
-    case Error(e)    => throw e
     case FlatMap(Suspend(fa), f) =>
       fa.asInstanceOf[F2[A]]
         .flatMap(a => f.asInstanceOf[A => Free[F2, A]](a).run)
@@ -50,7 +48,6 @@ enum Free[+F[_], A]:
     step match
       case Return(a)  => G.pure(a)
       case Suspend(s) => t(s)
-      case Error(e)   => throw e
       case FlatMap(x, f) =>
         x match
           case Suspend(resume) =>
@@ -88,10 +85,8 @@ object Free:
     def runTrampoline: A = fa match
       case Return(a)  => a
       case Suspend(r) => r()
-      case Error(e)   => throw e
       case FlatMap(sub, k) =>
         sub match
-          case Error(e)   => throw e
           case Return(a)  => k(a).runTrampoline
           case Suspend(r) => k(r()).runTrampoline
           case FlatMap(y, g) =>

@@ -43,20 +43,22 @@ object Task:
     def unsafeAttemptRunSync(using Async): Try[A] =
       try IO.unsafeRunSync(self)
       catch case NonFatal(t) => Failure(t)
+  end extension
+  def unit: Task[Unit] = now(())
 
   def apply[A](a: => A): Task[A] = IO(Try(a))
 
-  def raiseError[A](e: Throwable): Task[A] = IO(Failure(e))
-  def now[A](a: A): Task[A] = IO.now(Success(a))
+  def raiseError[A](e: Throwable): Task[A] = IO(Try(throw e))
+  def now[A](a: A): Task[A] = IO.now(Try(a))
 
-  def more[A](a: => Task[A]): Task[A] = now(()).flatMap(_ => a)
+  def more[A](a: => Task[A]): Task[A] = now(()).flatMap(_ => apply(a)).asInstanceOf[Task[Task[A]]].flatten
 
   def delay[A](a: => A): Task[A] = more(apply(a))
 
   def fork[A](a: => Task[A]): Task[A] =
-    IO.par(Par.lazyUnit(())).flatMap(_ => a)
+    IO.par(Par.lazyUnit(())).flatMap(_ => apply(a)).asInstanceOf[Task[Task[A]]].flatten
 
-  def forkUnit[A](a: => A): Task[A] = fork(now(a))
+  def forkUnit[A](a: => A): Task[A] = fork(apply(a))
 
   given monad: MonadThrow[Task] with
     def pure[A](x: A): Task[A] = Task(x)
@@ -73,3 +75,4 @@ object Task:
     def handleErrorWith[A](fa: Task[A])(f: Throwable => Task[A]): Task[A] = fa.handleErrorWith(f)
 
     def raiseError[A](e: Throwable): Task[A] = Task.raiseError(e)
+end Task

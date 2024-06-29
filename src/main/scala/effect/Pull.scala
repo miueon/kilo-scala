@@ -1,5 +1,6 @@
-package effect
+package effect.pull
 
+import effect.*
 import cats.Monad
 import cats.kernel.Monoid
 import cats.syntax.all.*
@@ -329,6 +330,7 @@ opaque type Stream[+F[_], +O] = Pull[F, O, Unit]
 object Stream:
   def empty: Stream[Nothing1, Nothing] = Pull.done
 
+
   def apply[O](os: O*): Stream[Nothing1, O] =
     Pull.fromList(os.toList)
 
@@ -365,7 +367,11 @@ object Stream:
   def resource[F[_], R](acquire: F[R])(release: R => F[Unit]): Stream[F, R] =
     Pull.Eval(acquire).flatMap(r => Pull.OpenScope(Pull.Output(r), Some(release(r))))
 
+  extension [O](self: Stream[Nothing1, O])
+    def toEffect[F2[_]]: Stream[F2, O] = self
+
   extension [F[_], O](self: Stream[F, O])
+
     def toPull: Pull[F, O, Unit] = self
 
     def fold[A](init: A)(f: (A, O) => A)(using MonadThrow[F]): F[A] =
@@ -395,10 +401,10 @@ object Stream:
     def onComplete(that: => Stream[F, O]): Stream[F, O] =
       handleErrorWith(t => that ++ raiseError(t)) ++ that
 
-    def drain: Stream[F, Nothing] = 
+    def drain: Stream[F, Nothing] =
       self.flatMapOutput(o => Stream.empty)
 
-    def scope: Stream[F, O] = 
+    def scope: Stream[F, O] =
       Pull.OpenScope(self, None)
   end extension
 
