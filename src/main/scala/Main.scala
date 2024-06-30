@@ -69,54 +69,54 @@ def test[F[_]: Monad]: Alg[F, Unit] =
     res <- Kleisli.liftF(env.test())
   yield res
 
-object Main extends IOApp:
-  def readCLine() =
-    val buffer = stackalloc[Byte](1024)
-    val line = stdio.fgets(buffer, 1024, stdio.stdin)
-    fromCString(line)
-  val interp = new AlgInterp[Task]:
-    def printLine(str: String): Task[Unit] =
-      // var cstr = Zone(toCString(str))
-      Task
-        .delay {
-          stdio.printf(c"%s\n", Zone(toCString(str)))
-          // throw java.lang.RuntimeException("test")
-        }
-        .handleError(e => println(e.getMessage))
-        .void
-      // Zone {
-      //   IO.fork(stdio.printf(c"%s\n", toCString(str)))
-      // }
-      // IO.forkUnit(println(str))
-    def readLine(): Task[Option[String]] =
-      // IO(Try(readCLine()).toOption)
-      Task.forkUnit(readCLine().some)
+// object Main extends IOApp:
+//   def readCLine() =
+//     val buffer = stackalloc[Byte](1024)
+//     val line = stdio.fgets(buffer, 1024, stdio.stdin)
+//     fromCString(line)
+//   val interp = new AlgInterp[Task]:
+//     def printLine(str: String): Task[Unit] =
+//       // var cstr = Zone(toCString(str))
+//       Task
+//         .delay {
+//           stdio.printf(c"%s\n", Zone(toCString(str)))
+//           // throw java.lang.RuntimeException("test")
+//         }
+//         .handleError(e => println(e.getMessage))
+//         .void
+//       // Zone {
+//       //   IO.fork(stdio.printf(c"%s\n", toCString(str)))
+//       // }
+//       // IO.forkUnit(println(str))
+//     def readLine(): Task[Option[String]] =
+//       // IO(Try(readCLine()).toOption)
+//       Task.forkUnit(readCLine().some)
 
-    def test(): Task[Unit] =
-      val c = scala.io.StdIn.readChar()
-      if c != 'q' then Task(println((c).toChar)) >> test()
-      else Task.unit
+//     def test(): Task[Unit] =
+//       val c = scala.io.StdIn.readChar()
+//       if c != 'q' then Task(println((c).toChar)) >> test()
+//       else Task.unit
 
-    import TerminOSOps.*
-    def enableRawMode: Task[Unit] =
-      Task
-        .now {
+//     import TerminOSOps.*
+//     def enableRawMode: Task[Unit] =
+//       Task
+//         .now {
 
-        }
-        .flatMap(_ => test())
+//         }
+//         .flatMap(_ => test())
 
-  def program[F[_]: Monad]: Alg[F, Unit] =
-    for
-      _ <- printLine("What's your name?")
-      _ <- enableRawMode
-      _ <- test
-    // name <- readLine
-    // _ <- printLine(s"Hello $name")
-    yield ()
+//   def program[F[_]: Monad]: Alg[F, Unit] =
+//     for
+//       _ <- printLine("What's your name?")
+//       _ <- enableRawMode
+//       _ <- test
+//     // name <- readLine
+//     // _ <- printLine(s"Hello $name")
+//     yield ()
 
-  def streamTest: IO[Unit] =
-    Stream.fromList(List(1, 2, 3)).toEffect.mapEval(x => Task(println(x))).run.asIO
-  def pureMain(args: List[String]): IO[Unit] =
-    // streamTest
-    program[Task].run(interp).asIO
-end Main
+//   def streamTest: IO[Unit] =
+//     Stream.fromList(List(1, 2, 3)).toEffect.mapEval(x => Task(println(x))).run.asIO
+//   def pureMain(args: List[String]): IO[Unit] =
+//     // streamTest
+//     program[Task].run(interp).asIO
+// end Main

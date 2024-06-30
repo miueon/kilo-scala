@@ -34,8 +34,9 @@ trait TaskEffectCreatation extends IOTypes:
   final def taskSuspend[R: _io, A](i: => Task[Eff[R, A]]): Eff[R, A] =
     Task.more(i).send[R].flatten
 
+object TaskInterpretation extends TaskInterpretation
 trait TaskInterpretation extends IOTypes:
-  def unsafeRunSync[A](e: Eff[Fx1[Task], A])(cb: Either[Throwable, A] => Unit)(using Async): Unit =
+  def unsafeRunSync[A](e: Eff[Fx1[Task], A])(using Async): A =
     Eff.detach(e).unsafeRunSync
 
   import interpret.of
