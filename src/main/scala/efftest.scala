@@ -8,6 +8,8 @@ import org.atnos.eff.all.*
 import org.atnos.eff.syntax.all.*
 import java.time.Instant
 import cats.data.Writer
+import cats.MonadThrow
+import cats.syntax.all.*
 
 case class Error(msg: String)
 
@@ -26,11 +28,9 @@ type _readerUrl[R] = MemberIn[Reader[PropertyApiUrl, *], R]
 
 object UserRepository:
 
-  def get(id: UserId): Task[Either[Error, User]] =
-    Task(
-      if id.get > 1000 then Right(User("Bob", id, PropertyId(123)))
-      else Left(Error(s"Id ${id.get} in invalid range"))
-    )
+  def get[F[_]: MonadThrow](id: UserId): F[Either[Error, User]] =
+    if id.get > 1000 then Right(User("Bob", id, PropertyId(123))).pure
+    else Left(Error(s"Id ${id.get} in invalid range")).pure
 
 def getUser[R: _either: _Task](id: UserId): Eff[R, User] =
   for
@@ -55,7 +55,6 @@ def logTime[R: _logger: _readClock](): Eff[R, Unit] =
     _ <- tell(s"The current time is $time")
   yield ()
 
-import cats.syntax.all.*
 def getPropertyForUserId(id: UserId): Task[Either[Error, Property]] =
 
   type AppStack = Fx.fx5[Reader[Instant, *], Either[Error, *], Writer[String, *], Reader[PropertyApiUrl, *], Task]
@@ -87,6 +86,6 @@ def getPropertyForUserId(id: UserId): Task[Either[Error, Property]] =
   // result
 end getPropertyForUserId
 
-object Main extends IOApp:
-  def pureMain(args: List[String]): IO[Unit] =
-    getPropertyForUserId(UserId(1200)).asIO.void
+// object Main extends IOApp:
+//   def pureMain(args: List[String]): IO[Unit] =
+//     getPropertyForUserId(UserId(1200)).asIO.void
