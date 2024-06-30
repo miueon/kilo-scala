@@ -35,8 +35,6 @@ nativeConfig ~= { c =>
 
 ThisBuild / scalacOptions ++= List(
   "-Ykind-projector",
-  "-Ypartial-unification",
-  "-Xfuture",
   "-language:implicitConversions,higherKinds,existentials",
   "-feature",
   "-Xlint:type-parameter-shadow"

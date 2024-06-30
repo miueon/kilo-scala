@@ -16,8 +16,12 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.UInt
 import scala.util.Try
-
-
+import org.atnos.eff.*
+import org.atnos.eff.all.*
+import org.atnos.eff.syntax.all.*
+import org.atnos.eff.MemberIn
+import rawmode.all.{disableRawMode as resetRawMode, enableRawMode as setRawMode}
+import effect.TaskEffect.*
 
 object TerminOSOps:
   extension (t: Ptr[termios.termios])
@@ -32,12 +36,40 @@ object TerminOSOps:
 
 case class TermIOS(orig: Ptr[termios.termios], z: Zone)
 
-type TermState = State[TermIOS, Unit]
+type _termState[R] = MemberIn[State[TermIOS, *], R]
 
+def enableRawMode[R: _termState]: Eff[R, Unit] =
+  for
+    term <- get[R, TermIOS]
+    _ <- put {
+      setRawMode(term.orig)
+      term
+    }
+  yield ()
 
-def test(using Zone): Unit =
-  val t = alloc[termios.termios]()
-  ???
+def disableRawMode[R: _termState]: Eff[R, Unit] =
+  for
+    term <- get[R, TermIOS]
+    _ <- put {
+      resetRawMode(term.orig)
+      term
+    }
+  yield ()
+
+def testGetLine[R: _Task]: Eff[R, String] =
+  for result <- fromTask(Task(scala.io.StdIn.readLine()))
+  yield result
+def testPrintLine[R: _Task](str: String): Eff[R, Unit] =
+  fromTask(Task(println(str)))
+type AppStack = Fx.fx2[State[TermIOS, *], Task]
+
+val program =
+  for
+    _ <- enableRawMode[AppStack]
+    str <- testGetLine[AppStack]
+    _ <- testPrintLine[AppStack](str)
+    _ <- disableRawMode[AppStack]
+  yield ()
 
 // trait AlgInterp[F[_]: MonadThrow]:
 //   def enableRawMode: F[Unit]
@@ -110,8 +142,10 @@ def test(using Zone): Unit =
 object Main extends IOApp:
 
   def pureMain(args: List[String]): IO[Unit] =
-    Zone {}
+    Zone { z ?=>
+      program.runState(TermIOS(alloc[termios.termios](), z)).toTask
+    }.asIO.void
     // streamTest
     // program[Task].run(interp).asIO
-    ???
+    // ???
 end Main
