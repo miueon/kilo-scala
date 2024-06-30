@@ -10,12 +10,12 @@ logLevel := Level.Info
 bindgenBindings := Seq(
   Binding
     .apply(
-      baseDirectory.value / "src" / "main" / "resources" / "scala-native" / "testraw.h",
-      "testraw"
+      baseDirectory.value / "src" / "main" / "resources" / "scala-native" / "rawmode.h",
+      "rawmode"
     )
     .withCImports(
       List(
-        "testraw.h"
+        "rawmode.h"
       )
     )
 )
@@ -33,7 +33,16 @@ nativeConfig ~= { c =>
   // .withTargetTriple("i686-linux-gnu")
 }
 
+ThisBuild / scalacOptions ++= List(
+  "-Ykind-projector",
+  "-Ypartial-unification",
+  "-Xfuture",
+  "-language:implicitConversions,higherKinds,existentials",
+  "-feature",
+  "-Xlint:type-parameter-shadow"
+)
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
 ThisBuild / libraryDependencies += "ch.epfl.lamp" %%% "gears" % "0.2.0"
 ThisBuild / libraryDependencies += "org.typelevel" %%% "alleycats-core" % "2.12.0"
+ThisBuild / libraryDependencies += "org.atnos" %%% "eff" % "7.0.4"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test

@@ -2,4 +2,4 @@
 #include <termios.h>
 #include <unistd.h>
 
-void enableRawMode();
+void enableRawMode(struct termios raw);

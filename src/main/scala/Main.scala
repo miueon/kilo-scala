@@ -62,7 +62,12 @@ def printLine[F[_]: Monad](str: String): Alg[F, Unit] = Kleisli(
 
 def enableRawMode[F[_]: Monad]: Alg[F, Unit] = Kleisli(_.enableRawMode)
 
-def test[F[_]: Monad]: Alg[F, Unit] = Kleisli(_.test())
+def test[F[_]: Monad]: Alg[F, Unit] = 
+  // Kleisli(_.test())
+  for 
+    env <- Kleisli.ask[F, AlgInterp[F]]
+    res <- Kleisli.liftF(env.test())
+  yield res
 
 object Main extends IOApp:
   def readCLine() =
@@ -96,7 +101,7 @@ object Main extends IOApp:
     def enableRawMode: Task[Unit] =
       Task
         .now {
-          testraw.all.enableRawMode()
+
         }
         .flatMap(_ => test())
 
