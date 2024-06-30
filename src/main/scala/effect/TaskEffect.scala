@@ -17,38 +17,36 @@ import scala.util.Success
 
 object TaskEffect extends TaskEffectCreatation, TaskInterpretation
 
-trait IOTypes:
-  type _io[R] = |=[Task, R]
-  type _Io[R] = <=[Task, R]
+trait TaskTypes:
+  type _task[R] = |=[Task, R]
+  type _Task[R] = <=[Task, R]
 
-trait TaskEffectCreatation extends IOTypes:
-  final def fromTask[R: _io, A](task: Task[A]): Eff[R, A] =
+trait TaskEffectCreatation extends TaskTypes:
+  final def fromTask[R: _task, A](task: Task[A]): Eff[R, A] =
     task.send[R]
 
-  final def taskRaiseError[R: _io, A](t: Throwable): Eff[R, A] =
+  final def taskRaiseError[R: _task, A](t: Throwable): Eff[R, A] =
     Task.raiseError(t).send[R]
 
-  final def taskDelay[R: _io, A](v: => A): Eff[R, A] =
+  final def taskDelay[R: _task, A](v: => A): Eff[R, A] =
     Task(v).send[R]
 
-  final def taskSuspend[R: _io, A](i: => Task[Eff[R, A]]): Eff[R, A] =
+  final def taskSuspend[R: _task, A](i: => Task[Eff[R, A]]): Eff[R, A] =
     Task.more(i).send[R].flatten
 
 object TaskInterpretation extends TaskInterpretation
-trait TaskInterpretation extends IOTypes:
+trait TaskInterpretation extends TaskTypes:
   def unsafeRunSync[A](e: Eff[Fx1[Task], A])(using Async): A =
     Eff.detach(e).unsafeRunSync
 
+  def toTask[A](e: Eff[Fx1[Task], A]): Task[A] = Eff.detach(e)
+
   import interpret.of
-  // given Traverse[[x] =>> Either[Throwable, x]] with
-  //   def foldLeft[A, B](fa: Either[Throwable, A], b: B)(f: (B, A) => B): B = ???
-  //   def foldRight[A, B](fa: Either[Throwable, A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = ???
-  //   def traverse[G[_]: Applicative, A, B](fa: Either[Throwable, A])(f: A => G[B]): G[Either[Throwable, B]] = ???
 
   def taskAttempt[R, A](e: Eff[R, A])(using m: MemberInOut[Task, R]): Eff[R, Either[Throwable, A]] =
     import cats.syntax.flatMap.toFlatMapOps
     import cats.syntax.applicative.catsSyntaxApplicativeId
-    interpret.interceptNatM[R, Task, [x] =>> Either[Throwable, x], A](
+    interpret.interceptNatM[R, Task, Either[Throwable, *], A](
       e,
       new (Task ~> ([x] =>> Task[Either[Throwable, x]])):
         def apply[A](fa: Task[A]): Task[Either[Throwable, A]] =

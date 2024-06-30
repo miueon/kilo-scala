@@ -12,6 +12,9 @@ extension [A](e: Eff[Fx1[Task], A])
   def unsafeRunSync(using Async): A =
     TaskEffect.unsafeRunSync(e)
 
+  def toTask: Task[A] = 
+    TaskEffect.toTask(e)
+
 extension [R, A](e: Eff[R, A])
   def taskAttempt(using m: MemberInOut[Task, R]): Eff[R, Throwable `Either` A] =
     TaskEffect.taskAttempt(e)
