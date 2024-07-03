@@ -22,6 +22,8 @@ import org.atnos.eff.syntax.all.*
 import org.atnos.eff.MemberIn
 import rawmode.all.{disableRawMode as resetRawMode, enableRawMode as setRawMode}
 import effect.TaskEffect.*
+import alleycats.std.set
+import cats.Eval
 
 object TerminOSOps:
   extension (t: Ptr[termios.termios])
@@ -34,7 +36,35 @@ object TerminOSOps:
     def c_ispeed: termios.speed_t = t._6
     def c_ospeed: termios.speed_t = t._7
 
-case class TermIOS(orig: Ptr[termios.termios], z: Zone)
+def malloc[A](size: CSize): Ptr[A] = stdlib.malloc(size).asInstanceOf[Ptr[A]]
+
+case class TermIOS(orig: Ptr[termios.termios])
+
+object TermIOS:
+  def enableRawMode[R: _safe]: Eff[R, Task[TermIOS]] =
+    protect {
+      Task {
+        val orig = malloc[termios.termios](sizeof[termios.termios])
+        setRawMode(orig)
+        TermIOS(orig = orig)
+      }
+    }
+
+  def disableRawMode[R: _safe](t: Task[TermIOS]): Eff[R, Task[Unit]] =
+    protect {
+      t.flatMap(termios =>
+        resetRawMode(termios.orig)
+        stdlib.free(termios.orig)
+        println("freed")
+        Task(())
+      )
+    }
+
+  def useRawMode[R: _safe]: Eff[R, IO[Unit]] =
+    org.atnos.eff.all.eval {
+      Eval.later(IO(println("test")))
+    }
+end TermIOS
 
 type _termState[R] = MemberIn[State[TermIOS, *], R]
 
@@ -61,15 +91,20 @@ def testGetLine[R: _Task]: Eff[R, String] =
   yield result
 def testPrintLine[R: _Task](str: String): Eff[R, Unit] =
   fromTask(Task(println(str)))
-type AppStack = Fx.fx2[State[TermIOS, *], Task]
-
-val program =
-  for
-    _ <- enableRawMode[AppStack]
-    str <- testGetLine[AppStack]
-    _ <- testPrintLine[AppStack](str)
-    _ <- disableRawMode[AppStack]
-  yield ()
+type AppStack = Fx.fx2[Safe, Task]
+// TODO write resource on top of Stream resource.
+// TODO write resource eff
+// TODO
+// val program: Eff[AppStack, Unit] =
+//   ???
+// bracket(TermIOS.enableRawMode)(t =>
+//   for
+//     // _ <- enableRawMode[AppStack]
+//     str <- testGetLine[AppStack]
+//     _ <- testPrintLine[AppStack](str)
+//   // _ <- disableRawMode[AppStack]
+//   yield ()
+// )(TermIOS.disableRawMode(_))
 
 // trait AlgInterp[F[_]: MonadThrow]:
 //   def enableRawMode: F[Unit]
@@ -139,13 +174,38 @@ val program =
 
 // def streamTest: IO[Unit] =
 //   Stream.fromList(List(1, 2, 3)).toEffect.mapEval(x => Task(println(x))).run.asIO
+import org.atnos.eff.all.*
 object Main extends IOApp:
-
   def pureMain(args: List[String]): IO[Unit] =
-    Zone { z ?=>
-      program.runState(TermIOS(alloc[termios.termios](), z)).toTask
-    }.asIO.void
-    // streamTest
-    // program[Task].run(interp).asIO
-    // ???
+    // Resource
+    //   .make[Task, TermIOS](Task {
+    //     val ptr = malloc[termios.termios](sizeof[termios.termios])
+    //     setRawMode(ptr)
+    //     TermIOS(ptr)
+    //   })(t =>
+    //     Task {
+    //       resetRawMode(t.orig)
+    //       stdlib.free(t.orig)
+    //       println("freed")
+    //     }
+    //   )
+    //   .use(_ =>
+    //     Task {
+    //       val a = scala.io.StdIn.readLine()
+    //       println(a)
+    //     }
+    //   ).asIO.void
+    // Zone { z ?=>
+    IO {
+      bracketLast(TermIOS.enableRawMode)(t => TermIOS.useRawMode)(
+        TermIOS.disableRawMode(_)
+      ).runSafe.run._1 match
+        case Left(e)      => IO(println(e.getMessage()))
+        case Right(value) => value
+    }.flatten
+      // }.flatten
+  end pureMain
+  // }.asIO.void
+  // streamTest
+  // program[Task].run(interp).asIO
 end Main
