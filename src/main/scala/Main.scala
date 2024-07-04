@@ -19,10 +19,8 @@ import scala.util.Try
 import rawmode.all.{disableRawMode as resetRawMode, enableRawMode as setRawMode}
 import cats.Eval
 import rawmode.*
+import scala.scalanative.posix.cpio
 
-// TODO write resource on top of Stream resource.
-// TODO write resource eff
-// TODO
 // val program: Eff[AppStack, Unit] =
 //   ???
 // bracket(TermIOS.enableRawMode)(t =>
@@ -100,15 +98,27 @@ import rawmode.*
 //   // _ <- printLine(s"Hello $name")
 //   yield ()
 
-
 object Main extends IOApp:
+  def readChar(ref: Ref[Task, Ptr[CChar]]): Task[Unit] =
+    for
+      cPtr <- ref.get
+      _ <- Task.delay(unistd.read(unistd.STDIN_FILENO, cPtr, UInt.valueOf(1)))
+      _ <-
+        if (!cPtr).toChar != 'q' then
+          if ctype.iscntrl((!cPtr).toInt) > 0 then Task(stdio.printf(c"%d\r\n", !cPtr)).void >> readChar(ref)
+          else Task(stdio.printf(c"%d ('%c')\r\n", !cPtr, !cPtr)).void >> readChar(ref)
+        else Task.unit
+    yield ()
+
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
-        Task {
-          val a = scala.io.StdIn.readLine()
-          println(a)
+        Zone {
+          for
+            cPtr <- Task(Ref[Task, Ptr[CChar]](stackalloc[CChar]()))
+            _ <- readChar(cPtr)
+          yield ()
         }
       )
       .asIO
