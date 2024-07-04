@@ -9,7 +9,7 @@ import rawmode.all.*
 
 import java.nio.charset.Charset
 import java.util.concurrent.Executors
-import scala.scalanative.libc.*
+import scala.scalanative.libc.{errno as libcErrno, *}
 import scala.scalanative.posix.termios
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
@@ -20,6 +20,8 @@ import rawmode.all.{disableRawMode as resetRawMode, enableRawMode as setRawMode}
 import cats.Eval
 import rawmode.*
 import scala.scalanative.posix.cpio
+import scala.scalanative.posix.errno
+import cats.data.EitherT
 
 // val program: Eff[AppStack, Unit] =
 //   ???
@@ -99,27 +101,43 @@ import scala.scalanative.posix.cpio
 //   yield ()
 
 object Main extends IOApp:
-  def readChar(ref: Ref[Task, Ptr[CChar]]): Task[Unit] =
+  inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
+  def editorReadKey(ref: Ref[Task, Ptr[CChar]]): Task[Unit] =
     for
       cPtr <- ref.get
-      _ <- Task.delay(unistd.read(unistd.STDIN_FILENO, cPtr, UInt.valueOf(1)))
+      nread <- Task.delay(unistd.read(unistd.STDIN_FILENO, cPtr, UInt.valueOf(1)))
       _ <-
-        if (!cPtr).toChar != 'q' then
-          if ctype.iscntrl((!cPtr).toInt) > 0 then Task(stdio.printf(c"%d\r\n", !cPtr)).void >> readChar(ref)
-          else Task(stdio.printf(c"%d ('%c')\r\n", !cPtr, !cPtr)).void >> readChar(ref)
+        if nread != 1 then editorReadKey(ref)
+        else if nread == -1 && errno.errno != errno.EAGAIN then Task.raiseError(new Exception("read"))
         else Task.unit
     yield ()
+
+  def editorProcessKeypress(): EitherT[Task, Int, Unit] =
+    val result: Task[Either[Int, Unit]] = for
+      cPtrRef <- Task(Ref[Task, Ptr[CChar]](malloc[CChar]))
+      _ <- editorReadKey(cPtrRef)
+      // r <- Task(println("keypressed")) >> Task(Left(0))
+      cPtr <- cPtrRef.get
+      // _ <- Task(println(s"keypressed: ${!cPtr}"))
+      r <- !cPtr match
+        case a if a == ctrlKey('q') => Task(Left(0))
+        case _ => Task(Right(()))
+    yield r
+    EitherT(result)
 
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
-        Zone {
+        def go(): Task[Unit] =
           for
-            cPtr <- Task(Ref[Task, Ptr[CChar]](stackalloc[CChar]()))
-            _ <- readChar(cPtr)
+            result <- editorProcessKeypress().isLeft
+            _ <- if result then Task.unit else go()
           yield ()
-        }
+        go()
+      )
+      .handleErrorWith(e =>
+        Task.apply(Zone(stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno))))
       )
       .asIO
       .void

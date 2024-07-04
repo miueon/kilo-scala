@@ -28,14 +28,15 @@ object TermIOS:
   def enableRawMode: Task[TermIOS] =
     Task {
       val orig = malloc[termios.termios]
-      setRawMode(orig)
-      TermIOS(orig)
+      if setRawMode(orig) < 0 then throw new Exception("enableRawMode failed")
+      else TermIOS(orig)
     }
 
   def disableRawMode(t: TermIOS): Task[Unit] =
     Task {
-      resetRawMode(t.orig)
+      val result = resetRawMode(t.orig)
       stdlib.free(t.orig)
-      println("freed")
+      if result < 0 then throw new Exception("disableRawMode failed")
+      else println("freed")
     }
 end TermIOS

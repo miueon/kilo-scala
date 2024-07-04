@@ -3,5 +3,5 @@
 #include <unistd.h>
 #include <string.h>
 
-void disableRawMode(struct termios *origTermios);
-void enableRawMode(struct termios *orig_termios);
+int disableRawMode(struct termios *origTermios);
+int enableRawMode(struct termios *orig_termios);
