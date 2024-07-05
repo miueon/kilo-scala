@@ -8,6 +8,7 @@ import cats.Monad
 import cats.syntax.all.*
 import cats.MonadThrow
 import gears.async.Async
+import cats.Defer
 
 /*
  * `Task[A]` is an opaque type around `IO[Try[A]]` which is
@@ -75,4 +76,7 @@ object Task:
     def handleErrorWith[A](fa: Task[A])(f: Throwable => Task[A]): Task[A] = fa.handleErrorWith(f)
 
     def raiseError[A](e: Throwable): Task[A] = Task.raiseError(e)
+  given Defer[Task] with
+    def defer[A](fa: => Task[A]): Task[A] = 
+      Task.more(fa)
 end Task

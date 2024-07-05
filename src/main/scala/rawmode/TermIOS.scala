@@ -10,6 +10,9 @@ import rawmode.all.{disableRawMode as resetRawMode, enableRawMode as setRawMode}
 import cats.Monad
 import effect.Task
 import cats.Eval
+import util.Utils.*
+import cats.syntax.all.*
+import cats.Defer
 
 object TerminOSOps:
   extension (t: Ptr[termios.termios])
@@ -25,18 +28,20 @@ object TerminOSOps:
 case class TermIOS(orig: Ptr[termios.termios])
 
 object TermIOS:
-  def enableRawMode: Task[TermIOS] =
-    Task {
+  def enableRawMode[F[_]: Monad]: F[TermIOS] =
+    Monad[F].pure {
       val orig = malloc[termios.termios]
       if setRawMode(orig) < 0 then throw new Exception("enableRawMode failed")
       else TermIOS(orig)
     }
 
-  def disableRawMode(t: TermIOS): Task[Unit] =
-    Task {
-      val result = resetRawMode(t.orig)
-      stdlib.free(t.orig)
-      if result < 0 then throw new Exception("disableRawMode failed")
-      else println("freed")
+  def disableRawMode[F[_]: Monad: Defer](t: TermIOS): F[Unit] =
+    Defer[F].defer {
+      Monad[F].pure {
+        val result = resetRawMode(t.orig)
+        stdlib.free(t.orig)
+        if result < 0 then throw new Exception("disableRawMode failed")
+        else println("freed")
+      }
     }
 end TermIOS

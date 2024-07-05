@@ -22,6 +22,7 @@ import rawmode.*
 import scala.scalanative.posix.cpio
 import scala.scalanative.posix.errno
 import cats.data.EitherT
+import util.Utils.*
 
 // val program: Eff[AppStack, Unit] =
 //   ???
@@ -102,6 +103,10 @@ import cats.data.EitherT
 
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
+  inline def resetCursorAndScreen(): Task[Unit] =
+    Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[2j", 4.toUInt))
+      >> Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt))
+
   def editorReadKey(ref: Ref[Task, Ptr[CChar]]): Task[Unit] =
     for
       cPtr <- ref.get
@@ -120,24 +125,34 @@ object Main extends IOApp:
       cPtr <- cPtrRef.get
       // _ <- Task(println(s"keypressed: ${!cPtr}"))
       r <- !cPtr match
-        case a if a == ctrlKey('q') => Task(Left(0))
-        case _ => Task(Right(()))
+        case a if a == ctrlKey('q') => resetCursorAndScreen() >> Task(Left(0))
+        case _                      => Task(Right(()))
     yield r
     EitherT(result)
+
+  def editorDrawRows(): Task[Unit] =
+    ???
+
+  def editorRefreshScreen(): Task[Unit] =
+    resetCursorAndScreen()
 
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
+        println("go")
         def go(): Task[Unit] =
           for
+            _ <- editorRefreshScreen()
             result <- editorProcessKeypress().isLeft
             _ <- if result then Task.unit else go()
           yield ()
         go()
       )
       .handleErrorWith(e =>
-        Task.apply(Zone(stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno))))
+        resetCursorAndScreen() >> Task.apply(
+          Zone(stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno)))
+        )
       )
       .asIO
       .void
