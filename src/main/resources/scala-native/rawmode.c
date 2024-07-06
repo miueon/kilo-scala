@@ -1,4 +1,5 @@
 #include "rawmode.h"
+#include <asm-generic/ioctls.h>
 
 int disableRawMode(struct termios *origTermios) {
   return tcsetattr(STDIN_FILENO, TCSAFLUSH, origTermios);

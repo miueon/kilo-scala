@@ -1,3 +1,4 @@
+import bindgen.interface.Includes
 scalaVersion := "3.4.2" // A Long Term Support version.
 // ThisBuild / usePipelining := true
 
@@ -30,7 +31,6 @@ nativeConfig ~= { c =>
     .withGC(GC.immix) // commix
     .withMultithreading(true)
   // .withIncrementalCompilation(true)
-  // .withTargetTriple("i686-linux-gnu")
 }
 
 ThisBuild / scalacOptions ++= List(
