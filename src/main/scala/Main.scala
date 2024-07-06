@@ -24,6 +24,15 @@ import scala.scalanative.posix.errno
 import cats.data.EitherT
 import util.Utils.*
 import cats.data.StateT
+import cats.Defer
+import org.atnos.eff.*
+import org.atnos.eff.all.*
+import org.atnos.eff.syntax.all.*
+import effect.*
+import effect.TaskEffect.*
+import effect.TaskInterpretation.*
+import cats.data.Reader
+import Main.Res.enableR
 
 // val program: Eff[AppStack, Unit] =
 //   ???
@@ -144,24 +153,61 @@ object Main extends IOApp:
       _ <- Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt))
     yield ()
 
+  def rawmodeResource[F[_]: MonadThrow: Defer]: F[Resource[F, TermIOS]] =
+    Resource.make(TermIOS.enableRawMode[F])(TermIOS.disableRawMode[F]).pure
+
+  type _readerInt[R] = MemberIn[Reader[Int, *], R]
+  type _acc[R] = MemberIn[State[Int, *], R]
+
+  def getProperty[R: _readerInt: _acc]: Eff[R, Int] =
+    for
+      r <- ask[R, Int]
+      _ <- modify((_: Int) + r)
+    yield r
+
+  object Res:
+    def enableR[R: _safe]: Eff[R, Unit] =
+      protect {
+        println("enable R")
+      }
+
+    def disableR[R: _safe]: Eff[R, Unit] =
+      protect {
+        println("disable R")
+      }
+
+    def usingIt[R:  _task]: Eff[R, Unit] =
+      fromTask(Task(println("using it")))
+
+  def program[R: _Safe: _task]: Eff[R, Unit] =
+    for
+      _ <- bracket(Res.enableR)(_ => Res.usingIt)(_ => Res.disableR)
+      _ <- fromTask(Task(println("test")))
+    // rawmodeResource <- fromTask(rawmodeResource)
+    // _ <- fromTask(rawmodeResource.use(_ =>
+
+    //   ???))
+    yield ()
+
   def pureMain(args: List[String]): IO[Unit] =
-    Resource
-      .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ =>
-        def go(): Task[Unit] =
-          for
-            _ <- editorRefreshScreen()
-            result <- editorProcessKeypress().isLeft
-            _ <- if result then Task.unit else go()
-          yield ()
-        go()
-      )
-      .handleErrorWith(e =>
-        resetCursorAndScreen() >> Task.apply(
-          Zone(stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno)))
-        )
-      )
-      .asIO
-      .void
+    program[Fx2[Safe, Task]].runSafe.toTask.void.asIO
+    // Resource
+    //   .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
+    //   .use(_ =>
+    //     def go(): Task[Unit] =
+    //       for
+    //         _ <- editorRefreshScreen()
+    //         result <- editorProcessKeypress().isLeft
+    //         _ <- if result then Task.unit else go()
+    //       yield ()
+    //     go()
+    //   )
+    //   .handleErrorWith(e =>
+    //     resetCursorAndScreen() >> Task.apply(
+    //       Zone(stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno)))
+    //     )
+    //   )
+    //   .asIO
+    //   .void
   end pureMain
 end Main
