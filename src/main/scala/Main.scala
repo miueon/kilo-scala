@@ -23,6 +23,7 @@ import scala.scalanative.posix.cpio
 import scala.scalanative.posix.errno
 import cats.data.EitherT
 import util.Utils.*
+import cats.data.StateT
 
 // val program: Eff[AppStack, Unit] =
 //   ???
@@ -100,12 +101,15 @@ import util.Utils.*
 //   // name <- readLine
 //   // _ <- printLine(s"Hello $name")
 //   yield ()
+case class EditorConfig(a: Int)
+
+type EditorConfigState[F[_]] = StateT[F, EditorConfig, Unit]
 
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
   inline def resetCursorAndScreen(): Task[Unit] =
-    Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[2j", 4.toUInt))
-      >> Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt))
+    Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[2J", 4.toUInt)) // reset screen
+      >> Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt)) // reset cursor, [x,xH
 
   def editorReadKey(ref: Ref[Task, Ptr[CChar]]): Task[Unit] =
     for
@@ -131,16 +135,19 @@ object Main extends IOApp:
     EitherT(result)
 
   def editorDrawRows(): Task[Unit] =
-    ???
+    Stream.eval(Task(unistd.write(unistd.STDOUT_FILENO, c"~\r\n", 3.toUInt)).void).repeat.take(24).run
 
   def editorRefreshScreen(): Task[Unit] =
-    resetCursorAndScreen()
+    for
+      _ <- resetCursorAndScreen()
+      _ <- editorDrawRows()
+      _ <- Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt))
+    yield ()
 
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
-        println("go")
         def go(): Task[Unit] =
           for
             _ <- editorRefreshScreen()
