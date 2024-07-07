@@ -35,6 +35,7 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.UInt
 import scala.util.Try
+import `macro`.*
 
 case class EditorConfig(screenRows: Int, screenCols: Int)
 
@@ -46,13 +47,12 @@ type _editorBuf[R] = State[String, *] |= R
 
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
-  inline val esc = "\u001b"
-  inline val hideCursorStr = esc + "[?25l"
-  inline val showCursorStr = esc + "[?25h"
-  inline val clearScreenStr = esc + "[2J"
-  inline val clearLineStr = esc + "[K"
-  inline val resetCursorStr = esc + "[H"
-  inline val resetScreenCursorStr = clearScreenStr + resetCursorStr
+  inline val hideCursor = "[?25l"
+  inline val showCursor = "[?25h"
+  inline val clearScreen = "[2J"
+  inline val clearLine = "[K"
+  inline val resetCursor = "[H"
+  inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
 
   inline def resetScreenCursorTask = Task(Zone {
     unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
@@ -107,10 +107,10 @@ object Main extends IOApp:
   import org.atnos.eff.Members.extractMember
   def editorRefreshScreen[R: _editorConfigState: _task: _editorBuf](): Eff[R, Unit] =
     for
-      _ <- modify[R, String](_ ++ hideCursorStr ++ resetScreenCursorStr)
+      _ <- modify[R, String](_ ++ escJoinStr(hideCursor, resetCursor))
       config <- get[R, EditorConfig]()
       _ <- editorDrawRows(config.screenRows)
-      _ <- modify[R, String](_ ++ "\u001b[H" ++ showCursorStr)
+      _ <- modify[R, String](_ ++ escJoinStr(resetCursor, showCursor))
       s <- get[R, String]
       _ <- fromTask(Task(Zone {
         unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
