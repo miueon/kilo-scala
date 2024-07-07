@@ -46,13 +46,12 @@ type _editorBuf[R] = State[String, *] |= R
 
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
-  val t = c""
-  inline def resetScreenCursorStr = "\u001b[2J\u001b[H"
+  inline val hideCursorStr = "\u001b[?25l"
+  inline val showCursorStr = "\u001b[?25h"
+  inline val resetScreenCursorStr = "\u001b[2J\u001b[H"
   inline def resetScreenCursorTask = Task(Zone {
     unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
   }).void
-  inline def resetCursorAndScreen[R: _editorBuf]: Eff[R, Unit] =
-    modify((s: String) => s ++ resetScreenCursorStr)
 
   def getWindowSize[F[_]: MonadThrow: Defer]: F[EitherRawResult[(Int, Int)]] =
     Defer[F].defer {
@@ -102,19 +101,16 @@ object Main extends IOApp:
     )
   import org.atnos.eff.Members.extractMember
   def editorRefreshScreen[R: _editorConfigState: _task: _editorBuf](): Eff[R, Unit] =
-    def getConfig[R: _editorConfigState]: Eff[R, EditorConfig] = get()
-    def getBuf[R: _editorBuf]: Eff[R, String] = get()
-    def resetBuf[R: _editorBuf]: Eff[R, Unit] = put("")
     for
-      _ <- resetCursorAndScreen
-      config <- getConfig
+      _ <- modify[R, String](_ ++ hideCursorStr ++ resetScreenCursorStr)
+      config <- get[R, EditorConfig]()
       _ <- editorDrawRows(config.screenRows)
-      _ <- modify[R, String](_ ++ "\u001b[H")
-      s <- getBuf
+      _ <- modify[R, String](_ ++ "\u001b[H" ++ showCursorStr)
+      s <- get[R, String]
       _ <- fromTask(Task(Zone {
         unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
       }))
-      _ <- resetBuf
+      _ <- modify[R, String](_ => "")
     yield ()
   end editorRefreshScreen
 

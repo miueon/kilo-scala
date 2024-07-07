@@ -9,3 +9,5 @@ object Utils:
 
   extension (i: Int) def toUInt = UInt.valueOf(i)
 
+  extension (s: String) def hexToChar = Integer.parseInt(s, 16).toChar
+
