@@ -7,6 +7,7 @@ import cats.data.Kleisli
 import cats.data.Reader
 import cats.data.State
 import cats.data.StateT
+import cats.data.Writer
 import cats.syntax.all.*
 import effect.*
 import effect.*
@@ -34,7 +35,6 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.UInt
 import scala.util.Try
-import cats.data.Writer
 
 case class EditorConfig(screenRows: Int, screenCols: Int)
 
@@ -46,9 +46,14 @@ type _editorBuf[R] = State[String, *] |= R
 
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
-  inline val hideCursorStr = "\u001b[?25l"
-  inline val showCursorStr = "\u001b[?25h"
-  inline val resetScreenCursorStr = "\u001b[2J\u001b[H"
+  inline val esc = "\u001b"
+  inline val hideCursorStr = esc + "[?25l"
+  inline val showCursorStr = esc + "[?25h"
+  inline val clearScreenStr = esc + "[2J"
+  inline val clearLineStr = esc + "[K"
+  inline val resetCursorStr = esc + "[H"
+  inline val resetScreenCursorStr = clearScreenStr + resetCursorStr
+
   inline def resetScreenCursorTask = Task(Zone {
     unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
   }).void
