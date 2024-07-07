@@ -42,11 +42,11 @@ inline val KILO_VERSION = "0.0.1"
 
 case class EditorConfig(cx: Int, cy: Int, screenRows: Int, screenCols: Int)
 
-type _editorConfigState[R] = State[EditorConfig, *] |= R
+type EditorConfigState[F[_], A] = StateT[F, EditorConfig, A]
+
+type EditorBufState[F[_]] = StateT[F, String, Unit]
 
 type EitherRawResult[A] = Either[Int, A]
-
-type _editorBuf[R] = State[String, *] |= R
 
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
@@ -60,42 +60,48 @@ object Main extends IOApp:
   def setCursoer(x: Int, y: Int) = s"[${y + 1};${x + 1}H"
   def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
-  inline def resetScreenCursorTask = Task(Zone {
+  inline def resetScreenCursorTask[F[_]: MonadThrow] = Zone { 
     unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
-  }).void
+  }.pure.void
 
   def getWindowSize[F[_]: MonadThrow: Defer]: F[EitherRawResult[(Int, Int)]] =
     Defer[F].defer {
       {
         val ws = stackalloc[winsize]()
-        if ioctl.ioctl(unistd.STDOUT_FILENO, get_TIOCGWINSZ(), ws.asInstanceOf[Ptr[Byte]]) == -1 || (!ws).ws_col == 0
+        if ioctl.ioctl(
+            unistd.STDOUT_FILENO,
+            get_TIOCGWINSZ(),
+            ws.asInstanceOf[Ptr[Byte]]
+          ) == -1 || (!ws).ws_col.toInt == 0
         then Left(-1)
         else Right((!ws).ws_col.toInt, (!ws).ws_row.toInt)
       }.pure
     }
 
-  def initEditor[R: _editorConfigState: _task]: Eff[R, Unit] =
+  def initEditor[F[_]: MonadThrow: Defer]: EditorConfigState[F, Unit] =
     for
-      result <- fromTask(getWindowSize)
+      result <- StateT.liftF(getWindowSize)
       _ <- result match
-        case Left(-1) => fromTask(Task.raiseError(new Exception("getWindowSize")))
+        case Left(_) => StateT.liftF(MonadThrow[F].raiseError(new Exception("getWindowSize")))
         case Right((col, row)) =>
-          modify((s: EditorConfig) => s.copy(screenRows = row, screenCols = col))
-        case _ => Eff.pure(())
+          StateT.modify[F, EditorConfig](_.copy(screenRows = row, screenCols = col))
+        // case _ => StateT.liftF(().pure)
     yield ()
 
-  def editorReadKey[F[_]: MonadThrow: Defer](ref: Ref[F, Ptr[CChar]]): F[Unit] =
+  def editorReadKey[F[_]: MonadThrow](ref: Ref[F, Ptr[CChar]]): F[Unit] =
     for
       cPtr <- ref.get
-      nread <- Defer[F].defer(unistd.read(unistd.STDIN_FILENO, cPtr, UInt.valueOf(1)).pure)
+      nread <- unistd.read(unistd.STDIN_FILENO, cPtr, 1.toUInt).pure
       _ <-
         if nread != 1 then editorReadKey(ref)
-        else if nread == -1 && errno.errno != errno.EAGAIN then new Exception("read").raiseError
+        else if nread == -1
+          // && unistd.errno != errno.EAGAIN
+        then new Exception("read").raiseError
         else MonadThrow[F].unit
     yield ()
 
-  def editorMoveCursor[R: _editorConfigState](key: CChar): Eff[R, Unit] =
-    modify[R, EditorConfig] { e =>
+  def editorMoveCursor[F[_]: MonadThrow](key: CChar): EditorConfigState[F, Unit] =
+    StateT.modify[F, EditorConfig] { e =>
       key match
         case 'a' => e.copy(cx = e.cx - 1)
         case 'd' => e.copy(cx = e.cx + 1)
@@ -103,20 +109,23 @@ object Main extends IOApp:
         case 's' => e.copy(cy = e.cy + 1)
     }
 
-  def editorProcessKeypress[R: _task: _editorBuf: _editorConfigState](): Eff[R, EitherRawResult[Unit]] =
+  def editorProcessKeypress[F[_]: MonadThrow](): EditorConfigState[F, EitherRawResult[Unit]] =
     for
-      cPtrRef <- fromTask(Ref[Task, Ptr[CChar]](malloc[CChar]).pure)
-      _ <- fromTask(editorReadKey(cPtrRef))
-      cPtr <- fromTask(cPtrRef.get)
-      r <- !cPtr match
-        case a if a == ctrlKey('q')      => fromTask(resetScreenCursorTask >> Task(Left(0)))
-        case a @ ('w' | 's' | 'a' | 'd') => editorMoveCursor(a) >> Right(()).pure
-        case _                           => Eff.pure(Right(()))
-      _ <- fromTask(Task(stdlib.free(cPtr)))
+      cPtrRef <- StateT.liftF(
+        MonadThrow[F].pure(()) >> 
+        Ref[F, Ptr[CChar]](malloc[CChar]).pure)
+      _ <- StateT.liftF(editorReadKey(cPtrRef))
+      cPtr <- StateT.liftF(cPtrRef.get)
+      k = !cPtr
+      _ <- StateT.liftF(MonadThrow[F].pure(()) >> stdlib.free(cPtr).pure)
+      r <- k match
+        case a if a == ctrlKey('q')      => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
+        case a @ ('w' | 's' | 'a' | 'd') => editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
+        case _                           => StateT.liftF(Right(()).pure)
     yield r
 
-  def editorDrawRows[R: _editorBuf](screenRows: Int, screenCols: Int): Eff[R, Unit] =
-    modify((s: String) =>
+  def editorDrawRows[F[_]: MonadThrow](screenRows: Int, screenCols: Int): EditorBufState[F] =
+    StateT.modify((s: String) =>
       s ++ (1 to screenRows)
         .foldLeft(StringBuilder.newBuilder)((bldr, idx) =>
           if idx == (screenRows / 3) - 1 then
@@ -130,54 +139,55 @@ object Main extends IOApp:
         )
         .toString()
     )
-  import org.atnos.eff.Members.extractMember
-  def editorRefreshScreen[R: _editorConfigState: _task: _editorBuf](): Eff[R, Unit] =
-    for
-      _ <- modify[R, String](_ ++ escJoinStr(hideCursor, resetCursor))
-      config <- get[R, EditorConfig]()
+
+  def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
+    val a = for
+      _ <- StateT.set("")
+      // _ <- StateT.modify[F, String](_ ++ "12345;laksdjc;lkasjdc;klasjd;clk")
+      _ <- StateT.modify[F, String](_ ++ escJoinStr(hideCursor, resetCursor))
+      // config <- get[R, EditorConfig]()
       _ <- editorDrawRows(config.screenRows, config.screenCols)
-      _ <- modify[R, String](_ ++ escJoinStrR(setCursoer(config.cx, config.cy), showCursor))
-      s <- get[R, String]
-      _ <- fromTask(Task(Zone {
+      _ <- StateT.modify[F, String](_ ++ escJoinStrR(setCursoer(config.cx, config.cy), showCursor))
+      s <- StateT.get[F, String]
+      _ <- StateT.liftF(Zone {
         unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
-      }))
-      _ <- modify[R, String](_ => "")
+      }.pure)
     yield ()
+    a.run("").map(_._2)
+
+    // Defer[F].defer(println("test").pure)
   end editorRefreshScreen
 
-  type AppStack = Fx.fx3[State[String, *], State[EditorConfig, *], Task]
-
-  def program: Eff[AppStack, Unit] =
-    def test: Eff[AppStack, Unit] =
-      for
-        _ <- fromTask[AppStack, Unit](Task(Thread.sleep(1)))
-        _ <- fromTask[AppStack, Unit](Task(println("test")))
+  def program[F[_]: MonadThrow: Defer]: EditorConfigState[F, Unit] =
+    def go: EditorConfigState[F, Unit] =
+      val a = for
+        config <- StateT.get[F, EditorConfig]
+        _ <- StateT.liftF(editorRefreshScreen(config))
       yield ()
-    def go(): Eff[AppStack, Unit] =
-      for
-        _ <- editorRefreshScreen[AppStack]()
-        r <- editorProcessKeypress[AppStack]()
-        _ <- if r.isLeft then Eff.pure(()) else go()
-      yield ()
+      a >>
+        Monad[StateT[F, EditorConfig, *]].whileM_(
+          editorProcessKeypress().map(_.isRight)
+        )(
+          a
+        )
     for
-      _ <- initEditor[AppStack]
-      _ <- go()
+      _ <- initEditor
+      _ <- go
     yield ()
+  end program
 
-  def pureMain(args: List[String]): IO[Unit] =
-    // program.runState(EditorConfig(0, 0, 0, 0)).runState("").toTask.void.asIO
+  def pureMain(args: List[String]): IO[Unit] = 
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program.runState(EditorConfig(0, 0, 0, 0)).runState("").toTask.void)
+      .use(_ => program[Task].run(EditorConfig(0, 0, 0, 0)).map(_._2))
       .handleErrorWith(e =>
-        resetScreenCursorTask >>
+        resetScreenCursorTask[Task] >>
           Task.apply(
-            Zone {
-              stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno))
+            Zone { 
+              stdio.printf(c"%s\n%s\n", toCString(e.getMessage))
             }
           )
       )
-      .asIO
-      .void
-  end pureMain
+      .asIO.void
+
 end Main
