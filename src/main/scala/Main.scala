@@ -156,13 +156,12 @@ object Main extends IOApp:
     def go(): Eff[AppStack, Unit] =
       for
         _ <- editorRefreshScreen[AppStack]()
-        // r <- editorProcessKeypress[AppStack]()
-        // _ <- if r.isLeft then Eff.pure(()) else go()
-        _ <- go()
+        r <- editorProcessKeypress[AppStack]()
+        _ <- if r.isLeft then Eff.pure(()) else go()
       yield ()
     for
       _ <- initEditor[AppStack]
-      _ <- test
+      _ <- go()
     yield ()
 
   def pureMain(args: List[String]): IO[Unit] =
