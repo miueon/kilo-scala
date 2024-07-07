@@ -34,6 +34,7 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.UInt
 import scala.util.Try
+import cats.data.Writer
 
 case class EditorConfig(screenRows: Int, screenCols: Int)
 
@@ -41,13 +42,17 @@ type _editorConfigState[R] = State[EditorConfig, *] |= R
 
 type EitherRawResult[A] = Either[Int, A]
 
+type _editorBuf[R] = State[String, *] |= R
+
 object Main extends IOApp:
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
-  inline def resetCursorAndScreen[F[_]: MonadThrow: Defer](): F[Unit] =
-    Defer[F].defer {
-      unistd.write(unistd.STDOUT_FILENO, c"\x1b[2J", 4.toUInt).pure // reset screen
-        >> unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt).pure // reset cursor, [x,xH
-    }.void
+  val t = c""
+  inline def resetScreenCursorStr = "\u001b[2J\u001b[H"
+  inline def resetScreenCursorTask = Task(Zone {
+    unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
+  }).void
+  inline def resetCursorAndScreen[R: _editorBuf]: Eff[R, Unit] =
+    modify((s: String) => s ++ resetScreenCursorStr)
 
   def getWindowSize[F[_]: MonadThrow: Defer]: F[EitherRawResult[(Int, Int)]] =
     Defer[F].defer {
@@ -79,32 +84,41 @@ object Main extends IOApp:
         else MonadThrow[F].unit
     yield ()
 
-  def editorProcessKeypress[R: _task](): Eff[R, EitherRawResult[Unit]] =
+  def editorProcessKeypress[R: _task: _editorBuf](): Eff[R, EitherRawResult[Unit]] =
     for
       cPtrRef <- fromTask(Ref[Task, Ptr[CChar]](malloc[CChar]).pure)
       _ <- fromTask(editorReadKey(cPtrRef))
       cPtr <- fromTask(cPtrRef.get)
       r <- !cPtr match
-        case a if a == ctrlKey('q') => fromTask(resetCursorAndScreen[Task]() >> Task(Left(0)))
+        case a if a == ctrlKey('q') => fromTask(resetScreenCursorTask >> Task(Left(0)))
         case _                      => fromTask(Task(Right(())))
     yield r
 
-  def editorDrawRows[F[_]: MonadThrow: Defer](screenRows: Int): F[Unit] =
-    Stream
-      .eval(Defer[F].defer(unistd.write(unistd.STDOUT_FILENO, c"~\r\n", 3.toUInt).pure).void)
-      .repeat
-      .take(screenRows)
-      .run
-
-  def editorRefreshScreen[R: _editorConfigState: _task](): Eff[R, Unit] =
+  def editorDrawRows[R: _editorBuf](screenRows: Int): Eff[R, Unit] =
+    modify((s: String) =>
+      s ++ (1 to screenRows)
+        .foldLeft(StringBuilder.newBuilder)((bldr, idx) => if idx < screenRows then bldr ++= "~\r\n" else bldr ++= "~")
+        .toString()
+    )
+  import org.atnos.eff.Members.extractMember
+  def editorRefreshScreen[R: _editorConfigState: _task: _editorBuf](): Eff[R, Unit] =
+    def getConfig[R: _editorConfigState]: Eff[R, EditorConfig] = get()
+    def getBuf[R: _editorBuf]: Eff[R, String] = get()
+    def resetBuf[R: _editorBuf]: Eff[R, Unit] = put("")
     for
-      _ <- fromTask(resetCursorAndScreen())
-      config <- get()
-      _ <- fromTask(editorDrawRows(config.screenRows))
-      _ <- fromTask(Task(unistd.write(unistd.STDOUT_FILENO, c"\x1b[H", 3.toUInt)))
+      _ <- resetCursorAndScreen
+      config <- getConfig
+      _ <- editorDrawRows(config.screenRows)
+      _ <- modify[R, String](_ ++ "\u001b[H")
+      s <- getBuf
+      _ <- fromTask(Task(Zone {
+        unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
+      }))
+      _ <- resetBuf
     yield ()
+  end editorRefreshScreen
 
-  type AppStack = Fx.fx2[State[EditorConfig, *], Task]
+  type AppStack = Fx.fx3[State[String, *], State[EditorConfig, *], Task]
 
   def program: Eff[AppStack, Unit] =
     def go(): Eff[AppStack, Unit] =
@@ -119,11 +133,14 @@ object Main extends IOApp:
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program.runState(EditorConfig(0, 0)).toTask.void)
+      .use(_ => program.runState(EditorConfig(0, 0)).runState("").toTask.void)
       .handleErrorWith(e =>
-        resetCursorAndScreen[Task]() >> Task.apply(
-          Zone { stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno)) }
-        )
+        resetScreenCursorTask >>
+          Task.apply(
+            Zone {
+              stdio.printf(c"%s\n%s\n", toCString(e.getMessage), string.strerror(errno.errno))
+            }
+          )
       )
       .asIO
       .void
