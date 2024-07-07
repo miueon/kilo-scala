@@ -28,7 +28,7 @@ import scala.scalanative.build.*
 nativeConfig ~= { c =>
   c.withLTO(LTO.none) // thin
     .withMode(Mode.debug) // releaseFast
-    .withGC(GC.immix) // commix
+    .withGC(GC.commix) // commix
     .withMultithreading(true)
   // .withIncrementalCompilation(true)
 }
@@ -40,7 +40,6 @@ ThisBuild / scalacOptions ++= List(
   "-Xlint:type-parameter-shadow"
 )
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
-ThisBuild / libraryDependencies += "ch.epfl.lamp" %%% "gears" % "0.2.0"
 ThisBuild / libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 ThisBuild / libraryDependencies += "org.atnos" %%% "eff" % "7.0.4"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test

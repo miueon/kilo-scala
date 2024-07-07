@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import effect.*
 import effect.TaskEffect.*
 import effect.TaskInterpretation.*
-import gears.async.Async
+// import gears.async.Async
 import org.atnos.eff.*
 import org.atnos.eff.all.*
 import org.atnos.eff.syntax.all.*

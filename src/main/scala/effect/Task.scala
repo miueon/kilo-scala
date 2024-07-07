@@ -3,11 +3,11 @@ package effect
 import java.util.concurrent.ExecutorService
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
-import par.gear.Par
+import par.Par
 import cats.Monad
 import cats.syntax.all.*
 import cats.MonadThrow
-import gears.async.Async
+// import gears.async.Async
 import cats.Defer
 
 /*
@@ -39,10 +39,14 @@ object Task:
       case Failure(e) => throw e
       case Success(a) => IO.now(a)
 
-    def unsafeRunSync(using Async): A = IO.unsafeRunSync(self).get
+    // def unsafeRunSync(using Async): A = IO.unsafeRunSync(self).get
+    def unsafeRunSync(pool: ExecutorService): A = IO.unsafeRunSync(self)(pool).get
 
-    def unsafeAttemptRunSync(using Async): Try[A] =
-      try IO.unsafeRunSync(self)
+    // def unsafeAttemptRunSync(using Async): Try[A] =
+    //   try IO.unsafeRunSync(self)
+    //   catch case NonFatal(t) => Failure(t)
+    def unsafeAttemptRunSync(pool: ExecutorService): Try[A] =
+      try IO.unsafeRunSync(self)(pool)
       catch case NonFatal(t) => Failure(t)
   end extension
   def unit: Task[Unit] = now(())
@@ -77,6 +81,6 @@ object Task:
 
     def raiseError[A](e: Throwable): Task[A] = Task.raiseError(e)
   given Defer[Task] with
-    def defer[A](fa: => Task[A]): Task[A] = 
+    def defer[A](fa: => Task[A]): Task[A] =
       Task.more(fa)
 end Task

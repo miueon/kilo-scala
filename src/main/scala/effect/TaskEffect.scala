@@ -5,7 +5,7 @@ import cats.Eval
 import cats.Traverse
 import cats.syntax.functor.toFunctorOps
 import cats.~>
-import gears.async.Async
+// import gears.async.Async
 import org.atnos.eff.*
 import org.atnos.eff.syntax.eff.*
 
@@ -36,8 +36,8 @@ trait TaskEffectCreatation extends TaskTypes:
 
 object TaskInterpretation extends TaskInterpretation
 trait TaskInterpretation extends TaskTypes:
-  def unsafeRunSync[A](e: Eff[Fx1[Task], A])(using Async): A =
-    Eff.detach(e).unsafeRunSync
+  // def unsafeRunSync[A](e: Eff[Fx1[Task], A])(using Async): A =
+  //   Eff.detach(e).unsafeRunSync
 
   def toTask[A](e: Eff[Fx1[Task], A]): Task[A] = Eff.detach(e)
 

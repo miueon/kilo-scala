@@ -1,3 +1,4 @@
+import `macro`.*
 import cats.Defer
 import cats.Eval
 import cats.Monad
@@ -35,11 +36,11 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.UInt
 import scala.util.Try
-import `macro`.*
+import scala.annotation.tailrec
 
 inline val KILO_VERSION = "0.0.1"
 
-case class EditorConfig(screenRows: Int, screenCols: Int)
+case class EditorConfig(cx: Int, cy: Int, screenRows: Int, screenCols: Int)
 
 type _editorConfigState[R] = State[EditorConfig, *] |= R
 
@@ -56,6 +57,8 @@ object Main extends IOApp:
   inline val resetCursor = "[H"
   inline val welcome = "Kilo editor -- version " + KILO_VERSION
   inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
+  def setCursoer(x: Int, y: Int) = s"[${y + 1};${x + 1}H"
+  def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
   inline def resetScreenCursorTask = Task(Zone {
     unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
@@ -91,14 +94,25 @@ object Main extends IOApp:
         else MonadThrow[F].unit
     yield ()
 
-  def editorProcessKeypress[R: _task: _editorBuf](): Eff[R, EitherRawResult[Unit]] =
+  def editorMoveCursor[R: _editorConfigState](key: CChar): Eff[R, Unit] =
+    modify[R, EditorConfig] { e =>
+      key match
+        case 'a' => e.copy(cx = e.cx - 1)
+        case 'd' => e.copy(cx = e.cx + 1)
+        case 'w' => e.copy(cy = e.cy - 1)
+        case 's' => e.copy(cy = e.cy + 1)
+    }
+
+  def editorProcessKeypress[R: _task: _editorBuf: _editorConfigState](): Eff[R, EitherRawResult[Unit]] =
     for
       cPtrRef <- fromTask(Ref[Task, Ptr[CChar]](malloc[CChar]).pure)
       _ <- fromTask(editorReadKey(cPtrRef))
       cPtr <- fromTask(cPtrRef.get)
       r <- !cPtr match
-        case a if a == ctrlKey('q') => fromTask(resetScreenCursorTask >> Task(Left(0)))
-        case _                      => fromTask(Task(Right(())))
+        case a if a == ctrlKey('q')      => fromTask(resetScreenCursorTask >> Task(Left(0)))
+        case a @ ('w' | 's' | 'a' | 'd') => editorMoveCursor(a) >> Right(()).pure
+        case _                           => Eff.pure(Right(()))
+      _ <- fromTask(Task(stdlib.free(cPtr)))
     yield r
 
   def editorDrawRows[R: _editorBuf](screenRows: Int, screenCols: Int): Eff[R, Unit] =
@@ -122,7 +136,7 @@ object Main extends IOApp:
       _ <- modify[R, String](_ ++ escJoinStr(hideCursor, resetCursor))
       config <- get[R, EditorConfig]()
       _ <- editorDrawRows(config.screenRows, config.screenCols)
-      _ <- modify[R, String](_ ++ escJoinStr(resetCursor, showCursor))
+      _ <- modify[R, String](_ ++ escJoinStrR(setCursoer(config.cx, config.cy), showCursor))
       s <- get[R, String]
       _ <- fromTask(Task(Zone {
         unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
@@ -134,19 +148,28 @@ object Main extends IOApp:
   type AppStack = Fx.fx3[State[String, *], State[EditorConfig, *], Task]
 
   def program: Eff[AppStack, Unit] =
+    def test: Eff[AppStack, Unit] =
+      for
+        _ <- fromTask[AppStack, Unit](Task(Thread.sleep(1)))
+        _ <- fromTask[AppStack, Unit](Task(println("test")))
+      yield ()
     def go(): Eff[AppStack, Unit] =
       for
-        _ <- initEditor[AppStack]
         _ <- editorRefreshScreen[AppStack]()
-        r <- editorProcessKeypress[AppStack]()
-        _ <- if r.isLeft then Eff.pure(()) else go()
+        // r <- editorProcessKeypress[AppStack]()
+        // _ <- if r.isLeft then Eff.pure(()) else go()
+        _ <- go()
       yield ()
-    go()
+    for
+      _ <- initEditor[AppStack]
+      _ <- test
+    yield ()
 
   def pureMain(args: List[String]): IO[Unit] =
+    // program.runState(EditorConfig(0, 0, 0, 0)).runState("").toTask.void.asIO
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program.runState(EditorConfig(0, 0)).runState("").toTask.void)
+      .use(_ => program.runState(EditorConfig(0, 0, 0, 0)).runState("").toTask.void)
       .handleErrorWith(e =>
         resetScreenCursorTask >>
           Task.apply(

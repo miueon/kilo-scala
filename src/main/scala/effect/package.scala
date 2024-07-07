@@ -1,6 +1,6 @@
 package effect
 
-import gears.async.Async
+// import gears.async.Async
 
 type Nothing1[A] = Nothing
 infix type ~>[F[_], G[_]] = [x] => F[x] => G[x]
@@ -9,8 +9,8 @@ final class Id
 
 import org.atnos.eff.*
 extension [A](e: Eff[Fx1[Task], A])
-  def unsafeRunSync(using Async): A =
-    TaskEffect.unsafeRunSync(e)
+  // def unsafeRunSync(using Async): A =
+  //   TaskEffect.unsafeRunSync(e)
 
   def toTask: Task[A] = 
     TaskEffect.toTask(e)
