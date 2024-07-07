@@ -37,6 +37,8 @@ import scala.scalanative.unsigned.UInt
 import scala.util.Try
 import `macro`.*
 
+inline val KILO_VERSION = "0.0.1"
+
 case class EditorConfig(screenRows: Int, screenCols: Int)
 
 type _editorConfigState[R] = State[EditorConfig, *] |= R
@@ -50,8 +52,9 @@ object Main extends IOApp:
   inline val hideCursor = "[?25l"
   inline val showCursor = "[?25h"
   inline val clearScreen = "[2J"
-  inline val clearLine = "[K"
+  inline val eraseInLine = "[K"
   inline val resetCursor = "[H"
+  inline val welcome = "Kilo editor -- version " + KILO_VERSION
   inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
 
   inline def resetScreenCursorTask = Task(Zone {
@@ -98,10 +101,19 @@ object Main extends IOApp:
         case _                      => fromTask(Task(Right(())))
     yield r
 
-  def editorDrawRows[R: _editorBuf](screenRows: Int): Eff[R, Unit] =
+  def editorDrawRows[R: _editorBuf](screenRows: Int, screenCols: Int): Eff[R, Unit] =
     modify((s: String) =>
       s ++ (1 to screenRows)
-        .foldLeft(StringBuilder.newBuilder)((bldr, idx) => if idx < screenRows then bldr ++= "~\r\n" else bldr ++= "~")
+        .foldLeft(StringBuilder.newBuilder)((bldr, idx) =>
+          if idx == (screenRows / 3) - 1 then
+            val welcomeDisplayLen = if welcome.size > screenCols then screenCols else welcome.size
+            val padding = (screenCols - welcomeDisplayLen) / 2
+            if padding > 0 then bldr ++= "~"
+            if padding - 1 > 0 then bldr ++= " ".repeat(padding - 1)
+            bldr ++= welcome.substring(0, welcomeDisplayLen)
+          else if idx < screenRows then bldr ++= s"~${eraseInLine.esc}\r\n"
+          else bldr ++= s"~${eraseInLine.esc}"
+        )
         .toString()
     )
   import org.atnos.eff.Members.extractMember
@@ -109,7 +121,7 @@ object Main extends IOApp:
     for
       _ <- modify[R, String](_ ++ escJoinStr(hideCursor, resetCursor))
       config <- get[R, EditorConfig]()
-      _ <- editorDrawRows(config.screenRows)
+      _ <- editorDrawRows(config.screenRows, config.screenCols)
       _ <- modify[R, String](_ ++ escJoinStr(resetCursor, showCursor))
       s <- get[R, String]
       _ <- fromTask(Task(Zone {
