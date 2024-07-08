@@ -44,6 +44,7 @@ type EditorBufState[F[_]] = StateT[F, String, Unit]
 type EitherRawResult[A] = Either[Int, A]
 
 object Main extends IOApp:
+  inline def escByte = 0x1b.toByte
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
   inline val hideCursor = "[?25l"
   inline val showCursor = "[?25h"
@@ -55,7 +56,7 @@ object Main extends IOApp:
   def setCursoer(x: Int, y: Int) = s"[${y + 1};${x + 1}H"
   def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
-  inline def resetScreenCursorTask[F[_]: MonadThrow] = Zone { 
+  inline def resetScreenCursorTask[F[_]: MonadThrow] = Zone {
     unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
   }.pure.void
 
@@ -83,17 +84,79 @@ object Main extends IOApp:
         // case _ => StateT.liftF(().pure)
     yield ()
 
-  def editorReadKey[F[_]: MonadThrow](ref: Ref[F, Ptr[CChar]]): F[Unit] =
+  def editorReadKey[F[_]: MonadThrow: Defer](): F[Byte] =
+    val read = Monad[StateT[F, (Int, Ref[F, Ptr[CChar]]), *]]
+      .whileM_(
+        for
+          (_, cPtrRef) <- StateT.get
+          cPtr <- StateT.liftF(cPtrRef.get)
+          nread <- StateT.liftF(unistd.read(unistd.STDIN_FILENO, cPtr, 1.toUInt).pure)
+          _ <- StateT.set((nread, cPtrRef))
+        yield nread != 1
+      )(
+        for
+          (nread, _) <- StateT.get()
+          _ <- StateT.liftF {
+            if nread == -1 then new Exception("read").raiseError else MonadThrow[F].unit
+          }
+        yield ()
+      )
+    val fc = Zone {
+      val ref = Ref[F, Ptr[CChar]](alloc())
+      // val p = for
+      //   (_, cPtrRef) <- read.get
+      //   c <- StateT.liftF(cPtrRef.get.map(!_))
+      //   r <-
+      //     StateT.liftF(Defer[F].defer {
+      //       if c == esc.toByte then
+      //         // {
+      //         //   val a = alloc[CChar]()
+      //         //   val b = alloc[CChar]()
+      //         //   if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then esc.toByte
+      //         //   else if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then esc.toByte
+      //         //   else if !a == '[' then
+      //         //     (!b) match
+      //         //       case 'A' => 'w'.toByte
+      //         //       case 'B' => 's'.toByte
+      //         //       case 'C' => 'd'.toByte
+      //         //       case 'D' => 'a'.toByte
+      //         //       case _   => esc.toByte
+      //         //   else esc.toByte
+      //         // }.pure
+      //         c.pure
+      //       else c.pure
+      //     })
+      // yield r
+      read.run((0, ref)).flatMap(_._1._2.get).map(a => !a)
+    }
     for
-      cPtr <- ref.get
-      nread <- unistd.read(unistd.STDIN_FILENO, cPtr, 1.toUInt).pure
-      _ <-
-        if nread != 1 then editorReadKey(ref)
-        else if nread == -1
-          // && unistd.errno != errno.EAGAIN
-        then new Exception("read").raiseError
-        else MonadThrow[F].unit
-    yield ()
+      c <- fc
+      _ <- 
+        println(s"c${c} and ${c == escByte}").pure 
+      r <- 
+        // c.pure
+        if c == escByte then
+          Defer[F].defer {{
+            val a = stackalloc[CChar]()
+            val b = stackalloc[CChar]()
+            if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte
+            else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte
+            else if !a == '[' then
+              println(s"${!a} ${!b}")
+              (!b) match
+                case 'A' => 'w'.toByte
+                case 'B' => 's'.toByte
+                case 'C' => 'd'.toByte
+                case 'D' => 'a'.toByte
+                case _   => escByte
+            else escByte
+          }.pure
+        }
+        else c.pure
+      _ <- println(s"result ${r}").pure
+    yield r
+    end for
+  end editorReadKey
 
   def editorMoveCursor[F[_]: MonadThrow](key: CChar): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { e =>
@@ -104,15 +167,16 @@ object Main extends IOApp:
         case 's' => e.copy(cy = e.cy + 1)
     }
 
-  def editorProcessKeypress[F[_]: MonadThrow](): EditorConfigState[F, EitherRawResult[Unit]] =
+  def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
     for
-      cPtrRef <- StateT.liftF(
-        MonadThrow[F].pure(()) >> 
-        Ref[F, Ptr[CChar]](malloc[CChar]).pure)
-      _ <- StateT.liftF(editorReadKey(cPtrRef))
-      cPtr <- StateT.liftF(cPtrRef.get)
-      k = !cPtr
-      _ <- StateT.liftF(MonadThrow[F].pure(()) >> stdlib.free(cPtr).pure)
+      // cPtrRef <- StateT.liftF(
+      //   MonadThrow[F].pure(()) >>
+      //     Ref[F, Ptr[CChar]](malloc[CChar]).pure
+      // )
+      k <- StateT.liftF(editorReadKey())
+      // cPtr <- StateT.liftF(cPtrRef.get)
+      // k = !cPtr
+      // _ <- StateT.liftF(MonadThrow[F].pure(()) >> stdlib.free(cPtr).pure)
       r <- k match
         case a if a == ctrlKey('q')      => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
         case a @ ('w' | 's' | 'a' | 'd') => editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
@@ -171,18 +235,19 @@ object Main extends IOApp:
     yield ()
   end program
 
-  def pureMain(args: List[String]): IO[Unit] = 
+  def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ => program[Task].run(EditorConfig(0, 0, 0, 0)).map(_._2))
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
-            Zone { 
+            Zone {
               stdio.printf(c"%s\n%s\n", toCString(e.getMessage))
             }
           )
       )
-      .asIO.void
+      .asIO
+      .void
 
 end Main
