@@ -49,6 +49,6 @@ object IO:
 end IO
 trait IOApp:
   def main(args: Array[String]): Unit =
-    pureMain(args.toList).unsafeRunSync(Executors.newCachedThreadPool())
+    pureMain(args.toList).unsafeRunSync(ForkJoinPool())
 
   def pureMain(args: List[String]): IO[Unit]

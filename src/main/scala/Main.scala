@@ -12,12 +12,7 @@ import cats.data.Writer
 import cats.syntax.all.*
 import effect.*
 import effect.*
-import effect.TaskEffect.*
-import effect.TaskInterpretation.*
 import effect.pull.Stream
-import org.atnos.eff.*
-import org.atnos.eff.all.*
-import org.atnos.eff.syntax.all.*
 import rawmode.*
 import rawmode.all.*
 import rawmode.all.disableRawMode as resetRawMode
