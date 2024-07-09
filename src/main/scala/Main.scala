@@ -51,6 +51,9 @@ object EditorKey:
   inline val ARROW_DOWN = 1003
   inline val PAGE_UP = 1004
   inline val PAGE_DOWN = 1005
+  inline val HOME_KEY = 1006
+  inline val END_KEY = 1007
+  inline val DEL_KEY = 1008
 
 import EditorKey.*
 object Main extends IOApp:
@@ -133,15 +136,26 @@ object Main extends IOApp:
                   case 'B' => ARROW_DOWN
                   case 'C' => ARROW_RIGHT
                   case 'D' => ARROW_LEFT
+                  case 'H' => HOME_KEY
+                  case 'F' => END_KEY
                   case bv if bv >= '0' && bv <= '9' =>
                     if unistd.read(unistd.STDIN_FILENO, c, 1.toUInt) != 1 then escInt
                     else if !c == '~' then
                       bv match
-                        case '5' => PAGE_UP
-                        case '6' => PAGE_DOWN
+                        case '1' | '7' => HOME_KEY
+                        case '4' | '8' => END_KEY
+                        case '3'       => DEL_KEY
+                        case '5'       => PAGE_UP
+                        case '6'       => PAGE_DOWN
                     else escInt
                   case _ => escInt
+              else if !a == 'O' then
+                (!b) match
+                  case 'H' => HOME_KEY
+                  case 'F' => END_KEY
+                  case _   => escInt
               else escInt
+              end if
             }.pure
           }
         else c.toInt.pure
@@ -164,10 +178,13 @@ object Main extends IOApp:
       config <- StateT.get
       r <- k match
         case a if a == ctrlKey('q') => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
+        case HOME_KEY               => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> Right(()).pure
+        case END_KEY => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> Right(()).pure
         case a @ (ARROW_UP | ARROW_RIGHT | ARROW_LEFT | ARROW_DOWN) =>
           editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
         case a @ (PAGE_UP | PAGE_DOWN) =>
-          editorMoveCursor(if a == PAGE_UP then ARROW_UP else ARROW_DOWN).replicateA_(config.screenRows) >> StateT.liftF(Right(()).pure)
+          editorMoveCursor(if a == PAGE_UP then ARROW_UP else ARROW_DOWN).replicateA_(config.screenRows) >> StateT
+            .liftF(Right(()).pure)
         case _ => StateT.liftF(Right(()).pure)
     yield r
 
