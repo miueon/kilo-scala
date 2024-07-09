@@ -44,17 +44,17 @@ type EditorBufState[F[_]] = StateT[F, String, Unit]
 
 type EitherRawResult[A] = Either[Int, A]
 
-type EditorKey = Int
 object EditorKey:
-  given _tag: Tag[EditorKey] = Tag.Int
   inline val ARROW_LEFT = 1000
   inline val ARROW_RIGHT = 1001
   inline val ARROW_UP = 1002
   inline val ARROW_DOWN = 1003
+  inline val PAGE_UP = 1004
+  inline val PAGE_DOWN = 1005
 
 import EditorKey.*
 object Main extends IOApp:
-  inline def escByte = 0x1b.toByte
+  inline val escInt = 0x1b
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
   inline val hideCursor = "[?25l"
   inline val showCursor = "[?25h"
@@ -119,21 +119,29 @@ object Main extends IOApp:
       c <- fc
       r <-
         // c.pure
-        if c == escByte then
+        if c == escInt.toByte then
           Defer[F].defer {
             {
               val a = stackalloc[CChar]()
               val b = stackalloc[CChar]()
-              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte.toInt
-              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte.toInt
+              val c = stackalloc[CChar]()
+              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escInt
+              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escInt
               else if !a == '[' then
                 (!b) match
                   case 'A' => ARROW_UP
                   case 'B' => ARROW_DOWN
                   case 'C' => ARROW_RIGHT
                   case 'D' => ARROW_LEFT
-                  case _   => escByte.toInt
-              else escByte.toInt
+                  case bv if bv >= '0' && bv <= '9' =>
+                    if unistd.read(unistd.STDIN_FILENO, c, 1.toUInt) != 1 then escInt
+                    else if !c == '~' then
+                      bv match
+                        case '5' => PAGE_UP
+                        case '6' => PAGE_DOWN
+                    else escInt
+                  case _ => escInt
+              else escInt
             }.pure
           }
         else c.toInt.pure
@@ -144,19 +152,22 @@ object Main extends IOApp:
   def editorMoveCursor[F[_]: MonadThrow](key: Int): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { e =>
       key match
-        case ARROW_LEFT => e.copy(cx = e.cx - 1)
-        case ARROW_RIGHT => e.copy(cx = e.cx + 1)
-        case ARROW_UP => e.copy(cy = e.cy - 1)
-        case ARROW_DOWN => e.copy(cy = e.cy + 1)
+        case ARROW_LEFT  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
+        case ARROW_RIGHT => if e.cx != e.screenCols - 1 then e.copy(cx = e.cx + 1) else e
+        case ARROW_UP    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
+        case ARROW_DOWN  => if e.cy != e.screenRows - 1 then e.copy(cy = e.cy + 1) else e
     }
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
     for
       k <- StateT.liftF(editorReadKey())
+      config <- StateT.get
       r <- k match
         case a if a == ctrlKey('q') => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
         case a @ (ARROW_UP | ARROW_RIGHT | ARROW_LEFT | ARROW_DOWN) =>
           editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
+        case a @ (PAGE_UP | PAGE_DOWN) =>
+          editorMoveCursor(if a == PAGE_UP then ARROW_UP else ARROW_DOWN).replicateA_(config.screenRows) >> StateT.liftF(Right(()).pure)
         case _ => StateT.liftF(Right(()).pure)
     yield r
 
