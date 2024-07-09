@@ -103,36 +103,10 @@ object Main extends IOApp:
       )
     val fc = Zone {
       val ref = Ref[F, Ptr[CChar]](alloc())
-      // val p = for
-      //   (_, cPtrRef) <- read.get
-      //   c <- StateT.liftF(cPtrRef.get.map(!_))
-      //   r <-
-      //     StateT.liftF(Defer[F].defer {
-      //       if c == esc.toByte then
-      //         // {
-      //         //   val a = alloc[CChar]()
-      //         //   val b = alloc[CChar]()
-      //         //   if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then esc.toByte
-      //         //   else if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then esc.toByte
-      //         //   else if !a == '[' then
-      //         //     (!b) match
-      //         //       case 'A' => 'w'.toByte
-      //         //       case 'B' => 's'.toByte
-      //         //       case 'C' => 'd'.toByte
-      //         //       case 'D' => 'a'.toByte
-      //         //       case _   => esc.toByte
-      //         //   else esc.toByte
-      //         // }.pure
-      //         c.pure
-      //       else c.pure
-      //     })
-      // yield r
       read.run((0, ref)).flatMap(_._1._2.get).map(a => !a)
     }
     for
       c <- fc
-      _ <- 
-        println(s"c${c} and ${c == escByte}").pure 
       r <- 
         // c.pure
         if c == escByte then
@@ -142,7 +116,6 @@ object Main extends IOApp:
             if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte
             else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte
             else if !a == '[' then
-              println(s"${!a} ${!b}")
               (!b) match
                 case 'A' => 'w'.toByte
                 case 'B' => 's'.toByte
@@ -153,7 +126,6 @@ object Main extends IOApp:
           }.pure
         }
         else c.pure
-      _ <- println(s"result ${r}").pure
     yield r
     end for
   end editorReadKey
