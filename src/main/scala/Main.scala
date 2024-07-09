@@ -14,6 +14,7 @@ import effect.*
 import effect.*
 import effect.pull.Stream
 import rawmode.*
+
 import rawmode.all.*
 import rawmode.all.disableRawMode as resetRawMode
 import rawmode.all.enableRawMode as setRawMode
@@ -29,7 +30,7 @@ import scala.scalanative.posix.termios
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
-import scala.scalanative.unsigned.UInt
+import scala.scalanative.unsigned.*
 import scala.util.Try
 import scala.annotation.tailrec
 
@@ -43,6 +44,16 @@ type EditorBufState[F[_]] = StateT[F, String, Unit]
 
 type EitherRawResult[A] = Either[Int, A]
 
+type EditorKey = Byte
+object EditorKey:
+  given _tag: Tag[EditorKey] = Tag.Byte
+  inline def define(inline a: Int): EditorKey = a.toUInt.toByte
+  val ARROW_LEFT = define(1000)
+  val ARROW_RIGHT = define(1001)
+  val ARROW_UP = define(1002)
+  val ARROW_DOWN = define(1003)
+
+import EditorKey.*
 object Main extends IOApp:
   inline def escByte = 0x1b.toByte
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
@@ -107,24 +118,25 @@ object Main extends IOApp:
     }
     for
       c <- fc
-      r <- 
+      r <-
         // c.pure
         if c == escByte then
-          Defer[F].defer {{
-            val a = stackalloc[CChar]()
-            val b = stackalloc[CChar]()
-            if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte
-            else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte
-            else if !a == '[' then
-              (!b) match
-                case 'A' => 'w'.toByte
-                case 'B' => 's'.toByte
-                case 'C' => 'd'.toByte
-                case 'D' => 'a'.toByte
-                case _   => escByte
-            else escByte
-          }.pure
-        }
+          Defer[F].defer {
+            {
+              val a = stackalloc[CChar]()
+              val b = stackalloc[CChar]()
+              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte
+              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte
+              else if !a == '[' then
+                (!b) match
+                  case 'A' => ARROW_UP
+                  case 'B' => ARROW_DOWN
+                  case 'C' => ARROW_RIGHT
+                  case 'D' => ARROW_LEFT
+                  case _   => escByte
+              else escByte
+            }.pure
+          }
         else c.pure
     yield r
     end for
@@ -133,26 +145,20 @@ object Main extends IOApp:
   def editorMoveCursor[F[_]: MonadThrow](key: CChar): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { e =>
       key match
-        case 'a' => e.copy(cx = e.cx - 1)
-        case 'd' => e.copy(cx = e.cx + 1)
-        case 'w' => e.copy(cy = e.cy - 1)
-        case 's' => e.copy(cy = e.cy + 1)
+        case ARROW_LEFT => e.copy(cx = e.cx - 1)
+        case ARROW_RIGHT => e.copy(cx = e.cx + 1)
+        case ARROW_UP => e.copy(cy = e.cy - 1)
+        case ARROW_DOWN => e.copy(cy = e.cy + 1)
     }
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
     for
-      // cPtrRef <- StateT.liftF(
-      //   MonadThrow[F].pure(()) >>
-      //     Ref[F, Ptr[CChar]](malloc[CChar]).pure
-      // )
       k <- StateT.liftF(editorReadKey())
-      // cPtr <- StateT.liftF(cPtrRef.get)
-      // k = !cPtr
-      // _ <- StateT.liftF(MonadThrow[F].pure(()) >> stdlib.free(cPtr).pure)
       r <- k match
-        case a if a == ctrlKey('q')      => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
-        case a @ ('w' | 's' | 'a' | 'd') => editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
-        case _                           => StateT.liftF(Right(()).pure)
+        case a if a == ctrlKey('q') => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
+        case a @ (ARROW_UP | ARROW_RIGHT | ARROW_LEFT | ARROW_DOWN) =>
+          editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
+        case _ => StateT.liftF(Right(()).pure)
     yield r
 
   def editorDrawRows[F[_]: MonadThrow](screenRows: Int, screenCols: Int): EditorBufState[F] =
