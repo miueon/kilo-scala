@@ -44,14 +44,13 @@ type EditorBufState[F[_]] = StateT[F, String, Unit]
 
 type EitherRawResult[A] = Either[Int, A]
 
-type EditorKey = Byte
+type EditorKey = Int
 object EditorKey:
-  given _tag: Tag[EditorKey] = Tag.Byte
-  inline def define(inline a: Int): EditorKey = a.toUInt.toByte
-  val ARROW_LEFT = define(1000)
-  val ARROW_RIGHT = define(1001)
-  val ARROW_UP = define(1002)
-  val ARROW_DOWN = define(1003)
+  given _tag: Tag[EditorKey] = Tag.Int
+  inline val ARROW_LEFT = 1000
+  inline val ARROW_RIGHT = 1001
+  inline val ARROW_UP = 1002
+  inline val ARROW_DOWN = 1003
 
 import EditorKey.*
 object Main extends IOApp:
@@ -95,7 +94,7 @@ object Main extends IOApp:
         // case _ => StateT.liftF(().pure)
     yield ()
 
-  def editorReadKey[F[_]: MonadThrow: Defer](): F[Byte] =
+  def editorReadKey[F[_]: MonadThrow: Defer](): F[Int] =
     val read = Monad[StateT[F, (Int, Ref[F, Ptr[CChar]]), *]]
       .whileM_(
         for
@@ -125,24 +124,24 @@ object Main extends IOApp:
             {
               val a = stackalloc[CChar]()
               val b = stackalloc[CChar]()
-              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte
-              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte
+              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escByte.toInt
+              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escByte.toInt
               else if !a == '[' then
                 (!b) match
                   case 'A' => ARROW_UP
                   case 'B' => ARROW_DOWN
                   case 'C' => ARROW_RIGHT
                   case 'D' => ARROW_LEFT
-                  case _   => escByte
-              else escByte
+                  case _   => escByte.toInt
+              else escByte.toInt
             }.pure
           }
-        else c.pure
+        else c.toInt.pure
     yield r
     end for
   end editorReadKey
 
-  def editorMoveCursor[F[_]: MonadThrow](key: CChar): EditorConfigState[F, Unit] =
+  def editorMoveCursor[F[_]: MonadThrow](key: Int): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { e =>
       key match
         case ARROW_LEFT => e.copy(cx = e.cx - 1)
