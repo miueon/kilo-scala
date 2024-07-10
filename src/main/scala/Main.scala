@@ -44,21 +44,32 @@ type EditorBufState[F[_]] = StateT[F, String, Unit]
 
 type EitherRawResult[A] = Either[Int, A]
 
-object EditorKey:
-  inline val ARROW_LEFT = 1000
-  inline val ARROW_RIGHT = 1001
-  inline val ARROW_UP = 1002
-  inline val ARROW_DOWN = 1003
-  inline val PAGE_UP = 1004
-  inline val PAGE_DOWN = 1005
-  inline val HOME_KEY = 1006
-  inline val END_KEY = 1007
-  inline val DEL_KEY = 1008
+enum PageKey:
+  case Up
+  case Down
 
-import EditorKey.*
+enum AKey:
+  case Left
+  case Right
+  case Up
+  case Down
+
+enum Key:
+  case Arrow(k: AKey)
+  case CtrlArrow(k: AKey)
+  case Page(k: PageKey)
+  case Home
+  case End
+  case Delete
+  case Escape
+  case Char(c: CChar)
+
+import Key.*
+import PageKey.*
 object Main extends IOApp:
   inline val escInt = 0x1b
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
+  val EXIT = ctrlKey('q')
   inline val hideCursor = "[?25l"
   inline val showCursor = "[?25h"
   inline val clearScreen = "[2J"
@@ -97,7 +108,7 @@ object Main extends IOApp:
         // case _ => StateT.liftF(().pure)
     yield ()
 
-  def editorReadKey[F[_]: MonadThrow: Defer](): F[Int] =
+  def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
     val read = Monad[StateT[F, (Int, Ref[F, Ptr[CChar]]), *]]
       .whileM_(
         for
@@ -128,48 +139,48 @@ object Main extends IOApp:
               val a = stackalloc[CChar]()
               val b = stackalloc[CChar]()
               val c = stackalloc[CChar]()
-              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then escInt
-              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then escInt
+              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then Escape
+              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then Escape
               else if !a == '[' then
                 (!b) match
-                  case 'A' => ARROW_UP
-                  case 'B' => ARROW_DOWN
-                  case 'C' => ARROW_RIGHT
-                  case 'D' => ARROW_LEFT
-                  case 'H' => HOME_KEY
-                  case 'F' => END_KEY
+                  case 'A' => Arrow(AKey.Up)
+                  case 'B' => Arrow(AKey.Down)
+                  case 'C' => Arrow(AKey.Right)
+                  case 'D' => Arrow(AKey.Left)
+                  case 'H' => Home
+                  case 'F' => End
                   case bv if bv >= '0' && bv <= '9' =>
-                    if unistd.read(unistd.STDIN_FILENO, c, 1.toUInt) != 1 then escInt
+                    if unistd.read(unistd.STDIN_FILENO, c, 1.toUInt) != 1 then Escape
                     else if !c == '~' then
                       bv match
-                        case '1' | '7' => HOME_KEY
-                        case '4' | '8' => END_KEY
-                        case '3'       => DEL_KEY
-                        case '5'       => PAGE_UP
-                        case '6'       => PAGE_DOWN
-                    else escInt
-                  case _ => escInt
+                        case '1' | '7' => Home
+                        case '4' | '8' => End
+                        case '3'       => Delete
+                        case '5'       => Page(Up)
+                        case '6'       => Page(Down)
+                    else Escape
+                  case _ => Escape
               else if !a == 'O' then
                 (!b) match
-                  case 'H' => HOME_KEY
-                  case 'F' => END_KEY
-                  case _   => escInt
-              else escInt
+                  case 'H' => Home
+                  case 'F' => End
+                  case _   => Escape
+              else Escape
               end if
             }.pure
           }
-        else c.toInt.pure
+        else Char(c).pure
     yield r
     end for
   end editorReadKey
 
-  def editorMoveCursor[F[_]: MonadThrow](key: Int): EditorConfigState[F, Unit] =
+  def editorMoveCursor[F[_]: MonadThrow](key: AKey): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { e =>
       key match
-        case ARROW_LEFT  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
-        case ARROW_RIGHT => if e.cx != e.screenCols - 1 then e.copy(cx = e.cx + 1) else e
-        case ARROW_UP    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
-        case ARROW_DOWN  => if e.cy != e.screenRows - 1 then e.copy(cy = e.cy + 1) else e
+        case AKey.Left  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
+        case AKey.Right => if e.cx != e.screenCols - 1 then e.copy(cx = e.cx + 1) else e
+        case AKey.Up    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
+        case AKey.Down  => if e.cy != e.screenRows - 1 then e.copy(cy = e.cy + 1) else e
     }
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
@@ -177,13 +188,13 @@ object Main extends IOApp:
       k <- StateT.liftF(editorReadKey())
       config <- StateT.get
       r <- k match
-        case a if a == ctrlKey('q') => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
-        case HOME_KEY               => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> Right(()).pure
-        case END_KEY => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> Right(()).pure
-        case a @ (ARROW_UP | ARROW_RIGHT | ARROW_LEFT | ARROW_DOWN) =>
+        case Char(EXIT) => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
+        case Home               => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> Right(()).pure
+        case End => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> Right(()).pure
+        case Arrow(a) =>
           editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
-        case a @ (PAGE_UP | PAGE_DOWN) =>
-          editorMoveCursor(if a == PAGE_UP then ARROW_UP else ARROW_DOWN).replicateA_(config.screenRows) >> StateT
+        case Page(a) =>
+          editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> StateT
             .liftF(Right(()).pure)
         case _ => StateT.liftF(Right(()).pure)
     yield r
