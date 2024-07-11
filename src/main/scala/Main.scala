@@ -33,10 +33,13 @@ import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.*
 import scala.util.Try
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 
 inline val KILO_VERSION = "0.0.1"
 
-case class EditorConfig(cx: Int, cy: Int, screenRows: Int, screenCols: Int)
+case class Row(chars: ArrayBuffer[Byte])
+
+case class EditorConfig(cx: Int, cy: Int, screenRows: Int, screenCols: Int, rows: ArrayBuffer[Row] = ArrayBuffer.empty)
 
 type EditorConfigState[F[_], A] = StateT[F, EditorConfig, A]
 
@@ -106,6 +109,11 @@ object Main extends IOApp:
         case Right((col, row)) =>
           StateT.modify[F, EditorConfig](_.copy(screenRows = row, screenCols = col))
         // case _ => StateT.liftF(().pure)
+    yield ()
+
+  def editorOpen[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
+    val line = "Hello world".toCharArray().map(_.toByte)
+    for _ <- StateT.modify[F, EditorConfig](c => c.copy(rows = c.rows.addOne(Row(ArrayBuffer.from(line)))))
     yield ()
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
@@ -189,8 +197,8 @@ object Main extends IOApp:
       config <- StateT.get
       r <- k match
         case Char(EXIT) => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
-        case Home               => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> Right(()).pure
-        case End => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> Right(()).pure
+        case Home       => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> Right(()).pure
+        case End        => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> Right(()).pure
         case Arrow(a) =>
           editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
         case Page(a) =>
@@ -199,18 +207,27 @@ object Main extends IOApp:
         case _ => StateT.liftF(Right(()).pure)
     yield r
 
-  def editorDrawRows[F[_]: MonadThrow](screenRows: Int, screenCols: Int): EditorBufState[F] =
+  def editorDrawRows[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
     StateT.modify((s: String) =>
-      s ++ (1 to screenRows)
+      s ++ (0 until config.screenRows)
         .foldLeft(StringBuilder.newBuilder)((bldr, idx) =>
-          if idx == (screenRows / 3) - 1 then
-            val welcomeDisplayLen = if welcome.size > screenCols then screenCols else welcome.size
-            val padding = (screenCols - welcomeDisplayLen) / 2
-            if padding > 0 then bldr ++= "~"
-            if padding - 1 > 0 then bldr ++= " ".repeat(padding - 1)
-            bldr ++= welcome.substring(0, welcomeDisplayLen)
-          else if idx < screenRows then bldr ++= s"~${eraseInLine.esc}\r\n"
-          else bldr ++= s"~${eraseInLine.esc}"
+          if idx >= config.rows.size then
+            if idx == (config.screenRows / 3) then
+              val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size
+              val padding = (config.screenCols - welcomeDisplayLen) / 2
+              if padding > 0 then bldr ++= "~"
+              if padding - 1 > 0 then bldr ++= " ".repeat(padding - 1)
+              bldr ++= welcome.substring(0, welcomeDisplayLen)
+            else if idx < config.screenRows - 1 then bldr ++= s"~${eraseInLine.esc}\r\n"
+            else bldr ++= s"~${eraseInLine.esc}"
+          else
+            val len = config.rows(0).chars.size
+            bldr ++= config
+              .rows(0)
+              .chars
+              .slice(0, if len > config.screenCols then config.screenCols else len)
+              .map(_.toChar)
+              .mkString
         )
         .toString()
     )
@@ -221,7 +238,7 @@ object Main extends IOApp:
       // _ <- StateT.modify[F, String](_ ++ "12345;laksdjc;lkasjdc;klasjd;clk")
       _ <- StateT.modify[F, String](_ ++ escJoinStr(hideCursor, resetCursor))
       // config <- get[R, EditorConfig]()
-      _ <- editorDrawRows(config.screenRows, config.screenCols)
+      _ <- editorDrawRows(config)
       _ <- StateT.modify[F, String](_ ++ escJoinStrR(setCursoer(config.cx, config.cy), showCursor))
       s <- StateT.get[F, String]
       _ <- StateT.liftF(Zone {
@@ -247,6 +264,7 @@ object Main extends IOApp:
         )
     for
       _ <- initEditor
+      _ <- editorOpen
       _ <- go
     yield ()
   end program
