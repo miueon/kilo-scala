@@ -282,7 +282,7 @@ object Main extends IOApp:
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
-        args.get(1).fold(Task.unit)(filename => program[Task](filename).run(EditorConfig(0, 0, 0, 0)).map(_._2))
+        args.headOption.fold(Task.unit)(filename => program[Task](filename).run(EditorConfig(0, 0, 0, 0)).map(_._2))
       )
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
