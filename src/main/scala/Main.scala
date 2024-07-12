@@ -33,6 +33,7 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.*
 import scala.util.Try
+import cats.data.OptionT
 
 inline val KILO_VERSION = "0.0.1"
 
@@ -113,16 +114,15 @@ object Main extends IOApp:
         // case _ => StateT.liftF(().pure)
     yield ()
 
-  def editorOpen[F[_]: MonadThrow](filename: String): EditorConfigState[F, Unit] =
-    val s = os.read.lines.stream(wd / filename)
-    s.head
-    val line = "Hello world".toCharArray().map(_.toByte)
-    for
-      headOpt <- StateT.liftF(os.read.lines.stream(wd / filename).headOption.pure)
-      _ <- StateT.modify[F, EditorConfig](c =>
-        headOpt.fold(c)(line => c.copy(rows = c.rows.addOne(Row(ArrayBuffer.from(line.toSeq.map(_.toByte))))))
-      )
-    yield ()
+  def editorOpen[F[_]: MonadThrow](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
+    filenameOpt.fold[EditorConfigState[F, Unit]]((()).pure)(filename =>
+      for
+        headOpt <- StateT.liftF(os.read.lines.stream(wd / filename).headOption.pure)
+        _ <- StateT.modify[F, EditorConfig](c =>
+          headOpt.fold(c)(line => c.copy(rows = c.rows.addOne(Row(ArrayBuffer.from(line.toSeq.map(_.toByte))))))
+        )
+      yield ()
+    )
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
     val read = Monad[StateT[F, (Int, Ref[F, Ptr[CChar]]), *]]
@@ -219,7 +219,7 @@ object Main extends IOApp:
       s ++ (0 until config.screenRows)
         .foldLeft(StringBuilder.newBuilder)((bldr, idx) =>
           if idx >= config.rows.size then
-            if idx == (config.screenRows / 3) then
+            if config.rows.isEmpty && idx == (config.screenRows / 3) then
               val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size
               val padding = (config.screenCols - welcomeDisplayLen) / 2
               if padding > 0 then bldr ++= "~"
@@ -254,7 +254,7 @@ object Main extends IOApp:
 
   end editorRefreshScreen
 
-  def program[F[_]: MonadThrow: Defer](filename: String): EditorConfigState[F, Unit] =
+  def program[F[_]: MonadThrow: Defer](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
     def go: EditorConfigState[F, Unit] =
       val a = for
         config <- StateT.get[F, EditorConfig]
@@ -268,7 +268,7 @@ object Main extends IOApp:
         )
     for
       _ <- initEditor
-      _ <- editorOpen(filename)
+      _ <- editorOpen(filenameOpt)
       _ <- go
     yield ()
   end program
@@ -276,9 +276,7 @@ object Main extends IOApp:
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ =>
-        args.headOption.fold(Task.unit)(filename => program[Task](filename).run(EditorConfig(0, 0, 0, 0)).map(_._2))
-      )
+      .use(_ => program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0)).map(_._2))
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
