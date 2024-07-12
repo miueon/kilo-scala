@@ -14,7 +14,6 @@ import effect.*
 import effect.*
 import effect.pull.Stream
 import rawmode.*
-
 import rawmode.all.*
 import rawmode.all.disableRawMode as resetRawMode
 import rawmode.all.enableRawMode as setRawMode
@@ -22,6 +21,8 @@ import util.Utils.*
 
 import java.nio.charset.Charset
 import java.util.concurrent.Executors
+import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 import scala.scalanative.libc.{errno as libcErrno, *}
 import scala.scalanative.posix.cpio
 import scala.scalanative.posix.errno
@@ -32,8 +33,6 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.*
 import scala.util.Try
-import scala.annotation.tailrec
-import scala.collection.mutable.ArrayBuffer
 
 inline val KILO_VERSION = "0.0.1"
 
@@ -149,7 +148,6 @@ object Main extends IOApp:
     for
       c <- fc
       r <-
-        // c.pure
         if c == escInt.toByte then
           Defer[F].defer {
             {
@@ -244,9 +242,7 @@ object Main extends IOApp:
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     val a = for
       _ <- StateT.set("")
-      // _ <- StateT.modify[F, String](_ ++ "12345;laksdjc;lkasjdc;klasjd;clk")
       _ <- StateT.modify[F, String](_ ++ escJoinStr(hideCursor, resetCursor))
-      // config <- get[R, EditorConfig]()
       _ <- editorDrawRows(config)
       _ <- StateT.modify[F, String](_ ++ escJoinStrR(setCursoer(config.cx, config.cy), showCursor))
       s <- StateT.get[F, String]
@@ -256,7 +252,6 @@ object Main extends IOApp:
     yield ()
     a.run("").map(_._2)
 
-    // Defer[F].defer(println("test").pure)
   end editorRefreshScreen
 
   def program[F[_]: MonadThrow: Defer](filename: String): EditorConfigState[F, Unit] =
