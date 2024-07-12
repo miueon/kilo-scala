@@ -30,7 +30,7 @@ nativeConfig ~= { c =>
     .withMode(Mode.debug) // releaseFast
     .withGC(GC.immix) // commix
     // .withMultithreading(true)
-  .withIncrementalCompilation(true)
+    .withIncrementalCompilation(true)
 }
 
 ThisBuild / scalacOptions ++= List(
@@ -40,5 +40,6 @@ ThisBuild / scalacOptions ++= List(
   "-Xlint:type-parameter-shadow"
 )
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
+ThisBuild / libraryDependencies += "com.lihaoyi" %%% "os-lib" % "0.10.2"
 ThisBuild / libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test

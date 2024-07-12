@@ -69,6 +69,9 @@ enum Key:
 
 import Key.*
 import PageKey.*
+
+val wd = os.pwd
+
 object Main extends IOApp:
   inline val escInt = 0x1b
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
@@ -111,9 +114,15 @@ object Main extends IOApp:
         // case _ => StateT.liftF(().pure)
     yield ()
 
-  def editorOpen[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
+  def editorOpen[F[_]: MonadThrow](filename: String): EditorConfigState[F, Unit] =
+    val s = os.read.lines.stream(wd / filename)
+    s.head
     val line = "Hello world".toCharArray().map(_.toByte)
-    for _ <- StateT.modify[F, EditorConfig](c => c.copy(rows = c.rows.addOne(Row(ArrayBuffer.from(line)))))
+    for
+      headOpt <- StateT.liftF(os.read.lines.stream(wd / filename).headOption.pure)
+      _ <- StateT.modify[F, EditorConfig](c =>
+        headOpt.fold(c)(line => c.copy(rows = c.rows.addOne(Row(ArrayBuffer.from(line.toSeq.map(_.toByte))))))
+      )
     yield ()
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
@@ -250,7 +259,7 @@ object Main extends IOApp:
     // Defer[F].defer(println("test").pure)
   end editorRefreshScreen
 
-  def program[F[_]: MonadThrow: Defer]: EditorConfigState[F, Unit] =
+  def program[F[_]: MonadThrow: Defer](filename: String): EditorConfigState[F, Unit] =
     def go: EditorConfigState[F, Unit] =
       val a = for
         config <- StateT.get[F, EditorConfig]
@@ -264,7 +273,7 @@ object Main extends IOApp:
         )
     for
       _ <- initEditor
-      _ <- editorOpen
+      _ <- editorOpen(filename)
       _ <- go
     yield ()
   end program
@@ -272,7 +281,9 @@ object Main extends IOApp:
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program[Task].run(EditorConfig(0, 0, 0, 0)).map(_._2))
+      .use(_ =>
+        args.get(1).fold(Task.unit)(filename => program[Task](filename).run(EditorConfig(0, 0, 0, 0)).map(_._2))
+      )
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
