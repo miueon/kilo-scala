@@ -258,6 +258,7 @@ object Main extends IOApp:
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.cx + 1}H"
     val a = for
+      _ <- StateT.set("")
       _ <- StateT.modify[F, String](_ ++ escJoinStr(hideCursor, resetCursor))
       _ <- editorDrawRows(config)
       _ <- StateT.modify[F, String](_ ++ escJoinStrR(setCursoer, showCursor))
@@ -265,7 +266,6 @@ object Main extends IOApp:
       _ <- StateT.liftF(Zone {
         unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
       }.pure)
-      _ <- StateT.set("")
     yield ()
     a.run("").map(_._2)
 
