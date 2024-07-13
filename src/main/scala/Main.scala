@@ -197,13 +197,19 @@ object Main extends IOApp:
   end editorReadKey
 
   def editorMoveCursor[F[_]: MonadThrow](key: AKey): EditorConfigState[F, Unit] =
-    StateT.modify[F, EditorConfig] { e =>
-      key match
-        case AKey.Left  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
-        case AKey.Right => e.rows.lift(e.cy).fold(e)(r => if e.cx < r.chars.size then e.copy(cx = e.cx + 1) else e)
-        case AKey.Up    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
-        case AKey.Down  => if e.cy < e.rows.size then e.copy(cy = e.cy + 1) else e
-    }
+    for
+      _ <- StateT.modify[F, EditorConfig] { e =>
+        key match
+          case AKey.Left  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
+          case AKey.Right => e.rows.lift(e.cy).fold(e)(r => if e.cx < r.chars.size then e.copy(cx = e.cx + 1) else e)
+          case AKey.Up    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
+          case AKey.Down  => if e.cy < e.rows.size then e.copy(cy = e.cy + 1) else e
+      }
+      _ <- StateT.modify[F, EditorConfig] { e =>
+        val rowLen = e.rows.lift(e.cy).fold(0)(_.chars.size)
+        e.copy(cx = e.cx `min` rowLen)
+      }
+    yield ()
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
     for
