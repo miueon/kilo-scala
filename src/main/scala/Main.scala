@@ -200,10 +200,20 @@ object Main extends IOApp:
     for
       _ <- StateT.modify[F, EditorConfig] { e =>
         key match
-          case AKey.Left  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
-          case AKey.Right => e.rows.lift(e.cy).fold(e)(r => if e.cx < r.chars.size then e.copy(cx = e.cx + 1) else e)
-          case AKey.Up    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
-          case AKey.Down  => if e.cy < e.rows.size then e.copy(cy = e.cy + 1) else e
+          case AKey.Left =>
+            if e.cx != 0 then e.copy(cx = e.cx - 1)
+            else if e.cy > 0 then e.copy(cy = e.cy - 1, cx = e.rows(e.cy - 1).chars.size)
+            else e
+          case AKey.Right =>
+            e.rows
+              .lift(e.cy)
+              .fold(e)(r =>
+                if e.cx < r.chars.size then e.copy(cx = e.cx + 1)
+                else if e.cx == r.chars.size then e.copy(cy = e.cy + 1, cx = 0)
+                else e
+              )
+          case AKey.Up   => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
+          case AKey.Down => if e.cy < e.rows.size then e.copy(cy = e.cy + 1) else e
       }
       _ <- StateT.modify[F, EditorConfig] { e =>
         val rowLen = e.rows.lift(e.cy).fold(0)(_.chars.size)
