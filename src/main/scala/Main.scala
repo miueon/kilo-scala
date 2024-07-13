@@ -225,19 +225,23 @@ object Main extends IOApp:
       if idx < config.screenRows - 1 then s"${eraseInLine.esc}\r\n"
       else s"${eraseInLine.esc}"
     StateT.modify[F, StringBuilder](bldr =>
-      val sc = config.rows.map(_.some).drop(config.rowoff)
-      sc.padTo(config.screenRows, None)
+      config.rows
+        .map(_.some)
+        .drop(config.rowoff)
+        .take(config.screenRows)
+        .padTo(config.screenRows, None)
         .zipWithIndex
         .foldLeft(bldr)((bldr, v) =>
           bldr ++= (v match
             case (Some(row), idx) =>
-              // val len = row.chars.size
-              // row.chars
-              //   .slice(0, if len > config.screenCols then config.screenCols else len)
-              //   .map(_.toChar)
-              //   .mkString
-              s"Test $idx ${config.rowoff} ${config.screenRows} cy=${config.cy}"
+              val len = row.chars.size
+              row.chars
+                .slice(0, if len > config.screenCols then config.screenCols else len)
+                .map(_.toChar)
+                .mkString
                 ++ appendLineBreak(idx)
+              // s"Test $idx ${config.rowoff} ${config.screenRows} cy=${config.cy}"
+              //   ++ appendLineBreak(idx)
             case (None, idx) =>
               (if config.rows.isEmpty && idx == (config.screenRows / 3) then
                  val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size

@@ -29,8 +29,15 @@ nativeConfig ~= { c =>
   c.withLTO(LTO.none) // thin
     .withMode(Mode.debug) // releaseFast
     .withGC(GC.boehm) // commix
-    // .withMultithreading(true)
+    .withMultithreading(true)
     .withIncrementalCompilation(true)
+    .withCompileOptions(List(
+      "-DGC_NPROCS=8",
+      "-DGC_MAXIMUM_HEAP_SIZE=20 * 1024 * 1024",
+      "-DGC_LOG_FILE=/tmp/gc.log",
+      "-DGC_ONLY_LOG_TO_FILE",
+      "-DGC_PRINT_STATS"
+    ))
 }
 
 ThisBuild / scalacOptions ++= List(
