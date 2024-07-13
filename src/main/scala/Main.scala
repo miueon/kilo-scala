@@ -42,6 +42,7 @@ case class EditorConfig(
     cx: Int,
     cy: Int,
     rowoff: Int,
+    coloff: Int,
     screenRows: Int,
     screenCols: Int,
     rows: ArrayBuffer[Row] = ArrayBuffer.empty
@@ -199,7 +200,7 @@ object Main extends IOApp:
     StateT.modify[F, EditorConfig] { e =>
       key match
         case AKey.Left  => if e.cx != 0 then e.copy(cx = e.cx - 1) else e
-        case AKey.Right => if e.cx != e.screenCols - 1 then e.copy(cx = e.cx + 1) else e
+        case AKey.Right => e.rows.lift(e.cy).fold(e)(r => if e.cx < r.chars.size then e.copy(cx = e.cx + 1) else e)
         case AKey.Up    => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
         case AKey.Down  => if e.cy < e.rows.size then e.copy(cy = e.cy + 1) else e
     }
@@ -234,14 +235,15 @@ object Main extends IOApp:
         .foldLeft(bldr)((bldr, v) =>
           bldr ++= (v match
             case (Some(row), idx) =>
-              val len = row.chars.size
+              val len = row.chars.size - config.coloff `max` 0
               row.chars
+                .drop(config.coloff)
                 .slice(0, if len > config.screenCols then config.screenCols else len)
                 .map(_.toChar)
                 .mkString
                 ++ appendLineBreak(idx)
-              // s"Test $idx ${config.rowoff} ${config.screenRows} cy=${config.cy}"
-              //   ++ appendLineBreak(idx)
+            // s"Test $idx ${config.rowoff} ${config.screenRows} cy=${config.cy}"
+            //   ++ appendLineBreak(idx)
             case (None, idx) =>
               (if config.rows.isEmpty && idx == (config.screenRows / 3) then
                  val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size
@@ -258,7 +260,7 @@ object Main extends IOApp:
   end editorDrawRows
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
-    def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.cx + 1}H"
+    def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.cx - config.coloff + 1}H"
     for r <- Ref[F, String]("").pure
     yield ()
     val a = for
@@ -276,10 +278,15 @@ object Main extends IOApp:
 
   def editorScroll[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
     StateT.modify(c =>
-      c.cy match
-        case cy if cy < c.rowoff                 => c.copy(rowoff = cy)
-        case cy if cy >= c.rowoff + c.screenRows => c.copy(rowoff = cy - c.screenRows + 1)
-        case _: Int                              => c
+      val rowoff = c.cy match
+        case cy if cy < c.rowoff                 => cy
+        case cy if cy >= c.rowoff + c.screenRows => cy - c.screenRows + 1
+        case _: Int                              => c.rowoff
+      val coloff = c.cx match
+        case cx if cx < c.coloff                 => cx
+        case cx if cx >= c.coloff + c.screenCols => cx - c.screenCols + 1
+        case _: Int                              => c.coloff
+      c.copy(rowoff = rowoff, coloff = coloff)
     )
 
   def program[F[_]: MonadThrow: Defer](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
@@ -305,7 +312,7 @@ object Main extends IOApp:
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0)).map(_._2))
+      .use(_ => program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0, 0)).map(_._2))
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
