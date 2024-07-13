@@ -35,8 +35,9 @@ import scala.util.Try
 import cats.data.OptionT
 
 inline val KILO_VERSION = "0.0.1"
+inline val KILO_TAB_STOP = 2
 
-case class Row(chars: ArrayBuffer[Byte])
+case class Row(chars: ArrayBuffer[Byte], render: String)
 
 case class EditorConfig(
     cx: Int,
@@ -126,10 +127,15 @@ object Main extends IOApp:
       for
         rows <- StateT.liftF(os.read.lines(wd / filename).pure)
         _ <- StateT.modify[F, EditorConfig](c =>
-          c.copy(rows = rows.map(r => Row(ArrayBuffer(r.removeSuffixNewLine.getBytes*))).to(ArrayBuffer))
+          c.copy(rows = rows.map(r => 
+            val arr = ArrayBuffer(r.removeSuffixNewLine.getBytes*)
+            Row(arr, editorUpdateRow(arr))).to(ArrayBuffer))
         )
       yield ()
     )
+
+  def editorUpdateRow(arr: ArrayBuffer[Byte]): String = 
+    arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
     val read = Monad[StateT[F, (Int, Ref[F, Ptr[CChar]]), *]]
@@ -251,8 +257,8 @@ object Main extends IOApp:
         .foldLeft(bldr)((bldr, v) =>
           bldr ++= (v match
             case (Some(row), idx) =>
-              val len = row.chars.size - config.coloff `max` 0
-              row.chars
+              val len = row.render.size - config.coloff `max` 0
+              row.render
                 .drop(config.coloff)
                 .slice(0, if len > config.screenCols then config.screenCols else len)
                 .map(_.toChar)
