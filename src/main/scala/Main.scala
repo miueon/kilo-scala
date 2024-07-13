@@ -72,6 +72,8 @@ import PageKey.*
 
 val wd = os.pwd
 
+extension (s: String) def removeSuffixNewLine: String = s.stripSuffix("\n").stripSuffix("\r")
+
 object Main extends IOApp:
   inline val escInt = 0x1b
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
@@ -117,9 +119,9 @@ object Main extends IOApp:
   def editorOpen[F[_]: MonadThrow](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
     filenameOpt.fold[EditorConfigState[F, Unit]]((()).pure)(filename =>
       for
-        headOpt <- StateT.liftF(os.read.lines.stream(wd / filename).headOption.pure)
+        rows <- StateT.liftF(os.read.lines(wd / filename).pure)
         _ <- StateT.modify[F, EditorConfig](c =>
-          headOpt.fold(c)(line => c.copy(rows = c.rows.addOne(Row(ArrayBuffer.from(line.toSeq.map(_.toByte))))))
+          c.copy(rows = rows.map(r => Row(ArrayBuffer(r.removeSuffixNewLine.getBytes*))).to(ArrayBuffer))
         )
       yield ()
     )
@@ -215,29 +217,36 @@ object Main extends IOApp:
     yield r
 
   def editorDrawRows[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
+    def appendLineBreak(idx: Int): String =
+      if idx < config.screenRows - 1 then s"${eraseInLine.esc}\r\n"
+      else s"${eraseInLine.esc}"
     StateT.modify((s: String) =>
-      s ++ (0 until config.screenRows)
-        .foldLeft(StringBuilder.newBuilder)((bldr, idx) =>
-          if idx >= config.rows.size then
-            if config.rows.isEmpty && idx == (config.screenRows / 3) then
-              val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size
-              val padding = (config.screenCols - welcomeDisplayLen) / 2
-              if padding > 0 then bldr ++= "~"
-              if padding - 1 > 0 then bldr ++= " ".repeat(padding - 1)
-              bldr ++= welcome.substring(0, welcomeDisplayLen)
-            else if idx < config.screenRows - 1 then bldr ++= s"~${eraseInLine.esc}\r\n"
-            else bldr ++= s"~${eraseInLine.esc}"
-          else
-            val len = config.rows(0).chars.size
-            bldr ++= config
-              .rows(0)
-              .chars
-              .slice(0, if len > config.screenCols then config.screenCols else len)
-              .map(_.toChar)
-              .mkString
+      s ++ config.rows.iterator
+        .map(_.some)
+        .padTo(config.screenRows, None)
+        .zipWithIndex
+        .foldLeft(StringBuilder.newBuilder)((bldr, v) =>
+          bldr ++= (v match
+            case (Some(row), idx) =>
+              val len = row.chars.size
+              row.chars
+                .slice(0, if len > config.screenCols then config.screenCols else len)
+                .map(_.toChar)
+                .mkString ++ appendLineBreak(idx)
+            case (None, idx) =>
+              (if config.rows.isEmpty && idx == (config.screenRows / 3) then
+                 val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size
+                 val padding = (config.screenCols - welcomeDisplayLen) / 2
+                 (if padding > 0 then "~" else "")
+                   + (if padding - 1 > 0 then " ".repeat(padding - 1) else "")
+                   + welcome.substring(0, welcomeDisplayLen)
+               else "~")
+              ++ appendLineBreak(idx)
+          )
         )
         .toString()
     )
+  end editorDrawRows
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     val a = for
