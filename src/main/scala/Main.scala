@@ -8,7 +8,6 @@ import cats.data.Kleisli
 import cats.data.Reader
 import cats.data.State
 import cats.data.StateT
-import cats.data.Writer
 import cats.syntax.all.*
 import effect.*
 import effect.*
@@ -50,7 +49,7 @@ case class EditorConfig(
 
 type EditorConfigState[F[_], A] = StateT[F, EditorConfig, A]
 
-type EditorBufState[F[_]] = StateT[F, String, Unit]
+type EditorBufState[F[_]] = StateT[F, StringBuilder, Unit]
 
 type EitherRawResult[A] = Either[Int, A]
 
@@ -94,9 +93,8 @@ object Main extends IOApp:
   inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
   def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
-  inline def resetScreenCursorTask[F[_]: MonadThrow] = Zone {
-    unistd.write(unistd.STDOUT_FILENO, toCString(resetScreenCursorStr), resetScreenCursorStr.size.toUInt)
-  }.pure.void
+  inline def resetScreenCursorTask[F[_]: MonadThrow] =
+    print(resetScreenCursorStr).pure
 
   def getWindowSize[F[_]: MonadThrow: Defer]: F[EitherRawResult[(Int, Int)]] =
     Defer[F].defer {
@@ -226,13 +224,13 @@ object Main extends IOApp:
     def appendLineBreak(idx: Int): String =
       if idx < config.screenRows - 1 then s"${eraseInLine.esc}\r\n"
       else s"${eraseInLine.esc}"
-    StateT.modify((s: String) =>
-      s ++ config.rows.iterator
+    StateT.modify[F, StringBuilder](bldr =>
+      config.rows.iterator
         .map(_.some)
         .drop(config.rowoff)
         .padTo(config.screenRows, None)
         .zipWithIndex
-        .foldLeft(StringBuilder.newBuilder)((bldr, v) =>
+        .foldLeft(bldr)((bldr, v) =>
           bldr ++= (v match
             case (Some(row), idx) =>
               val len = row.chars.size
@@ -251,24 +249,25 @@ object Main extends IOApp:
               ++ appendLineBreak(idx)
           )
         )
-        .toString()
+      bldr
     )
   end editorDrawRows
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.cx + 1}H"
-    val a = for
-      _ <- StateT.modify[F, String](_ ++ escJoinStr(hideCursor, resetCursor))
-      _ <- editorDrawRows(config)
-      _ <- StateT.modify[F, String](_ ++ escJoinStrR(setCursoer, showCursor))
-      s <- StateT.get[F, String]
-      _ <- StateT.liftF(Zone {
-        unistd.write(unistd.STDOUT_FILENO, toCString(s), s.size.toUInt)
-      }.pure)
-      _ <- StateT.set("")
+    for r <- Ref[F, String]("").pure
     yield ()
-    a.run("").map(_._2)
-
+    val a = for
+      _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStr(hideCursor, resetCursor))
+      _ <- editorDrawRows(config)
+      _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStrR(setCursoer, showCursor))
+      bldr <- StateT.get
+      _ <- StateT.liftF({
+        val s = bldr.toString()
+        print(s)
+      }.pure)
+    yield ()
+    a.run(StringBuilder.newBuilder).map(_._2)
   end editorRefreshScreen
 
   def editorScroll[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
@@ -306,12 +305,9 @@ object Main extends IOApp:
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
-            Zone {
-              stdio.printf(c"%s\n%s\n", toCString(e.getMessage))
-            }
+            printf(f"%%s\n", e.getMessage())
           )
       )
       .asIO
       .void
-
 end Main
