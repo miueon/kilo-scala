@@ -28,7 +28,7 @@ import scala.scalanative.build.*
 nativeConfig ~= { c =>
   c.withLTO(LTO.none) // thin
     .withMode(Mode.debug) // releaseFast
-    .withGC(GC.immix) // commix
+    .withGC(GC.boehm) // commix
     // .withMultithreading(true)
     .withIncrementalCompilation(true)
 }
