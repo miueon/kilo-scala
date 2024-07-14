@@ -39,6 +39,7 @@ inline val KILO_TAB_STOP = 2
 
 case class Row(chars: ArrayBuffer[Byte], render: String)
 
+
 case class EditorConfig(
     cx: Int,
     cy: Int,
@@ -47,7 +48,8 @@ case class EditorConfig(
     coloff: Int,
     screenRows: Int,
     screenCols: Int,
-    rows: ArrayBuffer[Row] = ArrayBuffer.empty
+    rows: ArrayBuffer[Row] = ArrayBuffer.empty,
+    filename: Option[String] = None
 )
 
 type EditorConfigState[F[_], A] = StateT[F, EditorConfig, A]
@@ -119,8 +121,7 @@ object Main extends IOApp:
       _ <- result match
         case Left(_) => StateT.liftF(MonadThrow[F].raiseError(new Exception("getWindowSize")))
         case Right((col, row)) =>
-          StateT.modify[F, EditorConfig](_.copy(screenRows = row, screenCols = col))
-        // case _ => StateT.liftF(().pure)
+          StateT.modify[F, EditorConfig](_.copy(screenRows = row - 1, screenCols = col))
     yield ()
 
   def editorOpen[F[_]: MonadThrow](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
@@ -128,13 +129,14 @@ object Main extends IOApp:
       for
         rows <- StateT.liftF(os.read.lines(wd / filename).pure)
         _ <- StateT.modify[F, EditorConfig](c =>
-          c.copy(rows =
-            rows
+          c.copy(
+            rows = rows
               .map(r =>
                 val arr = ArrayBuffer(r.removeSuffixNewLine.getBytes*)
                 Row(arr, editorUpdateRow(arr))
               )
-              .to(ArrayBuffer)
+              .to(ArrayBuffer),
+            filename = filename.some
           )
         )
       yield ()
@@ -242,7 +244,10 @@ object Main extends IOApp:
       r: EitherRawResult[Unit] <- k match
         case Char(EXIT) => StateT.liftF(resetScreenCursorTask) >> failedState(0)
         case Home       => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
-        case End        => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> successState
+        case End =>
+          StateT.modify[F, EditorConfig](e =>
+            if e.cy < e.rows.size then e.copy(cx = e.screenCols - 1) else e
+          ) >> successState
         case Arrow(a) =>
           editorMoveCursor(a) >> successState
         case Page(a) =>
@@ -255,12 +260,13 @@ object Main extends IOApp:
             >> editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> successState
         case _ => successState
     yield r
+    end for
   end editorProcessKeypress
 
   def editorDrawRows[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
-    def appendLineBreak(idx: Int): String =
-      if idx < config.screenRows - 1 then s"${eraseInLine.esc}\r\n"
-      else s"${eraseInLine.esc}"
+    def appendLineBreak: String =
+      s"${eraseInLine.esc}\r\n"
+
     StateT.modify[F, StringBuilder](bldr =>
       config.rows
         .map(_.some)
@@ -277,7 +283,7 @@ object Main extends IOApp:
                 .slice(0, if len > config.screenCols then config.screenCols else len)
                 .map(_.toChar)
                 .mkString
-                ++ appendLineBreak(idx)
+                ++ appendLineBreak
             // s"Test $idx ${config.rowoff} ${config.screenRows} cy=${config.cy}"
             //   ++ appendLineBreak(idx)
             case (None, idx) =>
@@ -288,12 +294,24 @@ object Main extends IOApp:
                    + (if padding - 1 > 0 then " ".repeat(padding - 1) else "")
                    + welcome.substring(0, welcomeDisplayLen)
                else "~")
-              ++ appendLineBreak(idx)
+              ++ appendLineBreak
           )
         )
       bldr
     )
   end editorDrawRows
+
+  def editorDrawStatusBar[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
+    StateT.modify[F, StringBuilder](bldr =>
+      val fileStatusStr = s"${config.filename.fold("[No Name]")(_.slice(0, 20))} - ${config.rows.size} lines"
+      val currentRowColStr = s"${config.cy + 1}/${config.rows.size}"
+      val blankSize = config.screenCols - fileStatusStr.size
+      bldr ++= "[7m".esc + fileStatusStr
+        + (if blankSize >= currentRowColStr.size then " " * (blankSize - currentRowColStr.size) else " " * blankSize)
+        + (if blankSize >= currentRowColStr.size then currentRowColStr else "")
+       + "[m".esc
+    )
+  end editorDrawStatusBar
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
@@ -302,6 +320,7 @@ object Main extends IOApp:
     val a = for
       _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStr(hideCursor, resetCursor))
       _ <- editorDrawRows(config)
+      _ <- editorDrawStatusBar(config)
       _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStrR(setCursoer, showCursor))
       bldr <- StateT.get
       _ <- StateT.liftF({
