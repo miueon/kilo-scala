@@ -242,6 +242,19 @@ object Main extends IOApp:
       }
     yield ()
 
+  def editorInsertChar[F[_]: MonadThrow](char: Byte): EditorConfigState[F, Unit] =
+    StateT.modify[F, EditorConfig] { c =>
+      val newConfig = c.rows.lift(c.cy) match
+        case Some(row) =>
+          row.chars.insert(c.cx, char)
+          c.rows.update(c.cy, row.copy(render = editorUpdateRow(row.chars)))
+          c
+        case None =>
+          c.rows.append(Row(ArrayBuffer(char), editorUpdateRow(ArrayBuffer(char))))
+          c
+      newConfig.copy(cx = newConfig.cx + 1)
+    }
+
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
     val successState = Right(()).pure[EditorConfigState[F, *]]
     def failedState(exitCode: Int) = Left(exitCode).pure[EditorConfigState[F, *]]
@@ -265,6 +278,7 @@ object Main extends IOApp:
             e.copy(cy = cy)
           }
             >> editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> successState
+        case Char(c) => editorInsertChar(c) >> successState
         case _ => successState
     yield r
     end for
