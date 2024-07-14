@@ -5,6 +5,7 @@ import cats.Monad
 import cats.MonadThrow
 import cats.data.EitherT
 import cats.data.Kleisli
+import cats.data.OptionT
 import cats.data.Reader
 import cats.data.State
 import cats.data.StateT
@@ -19,6 +20,7 @@ import rawmode.all.enableRawMode as setRawMode
 import util.Utils.*
 
 import java.nio.charset.Charset
+import java.time.Instant
 import java.util.concurrent.Executors
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
@@ -32,13 +34,17 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.*
 import scala.util.Try
-import cats.data.OptionT
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
+inline val KILO_MSG = "HELP: Ctrl-Q = quit"
 
 case class Row(chars: ArrayBuffer[Byte], render: String)
 
+case class StatusMessage(
+    msg: String,
+    time: Instant = Instant.now()
+)
 
 case class EditorConfig(
     cx: Int,
@@ -48,6 +54,7 @@ case class EditorConfig(
     coloff: Int,
     screenRows: Int,
     screenCols: Int,
+    statusMsg: Option[StatusMessage] = None,
     rows: ArrayBuffer[Row] = ArrayBuffer.empty,
     filename: Option[String] = None
 )
@@ -121,7 +128,7 @@ object Main extends IOApp:
       _ <- result match
         case Left(_) => StateT.liftF(MonadThrow[F].raiseError(new Exception("getWindowSize")))
         case Right((col, row)) =>
-          StateT.modify[F, EditorConfig](_.copy(screenRows = row - 1, screenCols = col))
+          StateT.modify[F, EditorConfig](_.copy(screenRows = row - 2, screenCols = col))
     yield ()
 
   def editorOpen[F[_]: MonadThrow](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
@@ -309,9 +316,19 @@ object Main extends IOApp:
       bldr ++= "[7m".esc + fileStatusStr
         + (if blankSize >= currentRowColStr.size then " " * (blankSize - currentRowColStr.size) else " " * blankSize)
         + (if blankSize >= currentRowColStr.size then currentRowColStr else "")
-       + "[m".esc
+        + "[m".esc
+        + "\r\n"
     )
   end editorDrawStatusBar
+
+  def editorDrawMessageBar[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
+    StateT.modify[F, StringBuilder](bldr =>
+      bldr ++= eraseInLine.esc + config.statusMsg.fold("")(statusMsg =>
+        val msgLen = statusMsg.msg.size `min` config.screenCols
+        if Instant.now().getEpochSecond() - statusMsg.time.getEpochSecond() < 5 then statusMsg.msg.substring(0, msgLen)
+        else ""
+      )
+    )
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
@@ -321,6 +338,7 @@ object Main extends IOApp:
       _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStr(hideCursor, resetCursor))
       _ <- editorDrawRows(config)
       _ <- editorDrawStatusBar(config)
+      _ <- editorDrawMessageBar(config)
       _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStrR(setCursoer, showCursor))
       bldr <- StateT.get
       _ <- StateT.liftF({
@@ -373,7 +391,9 @@ object Main extends IOApp:
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0, 0, 0)).map(_._2))
+      .use(_ =>
+        program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0, 0, 0, StatusMessage(KILO_MSG).some)).map(_._2)
+      )
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
