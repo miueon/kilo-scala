@@ -234,20 +234,28 @@ object Main extends IOApp:
     yield ()
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
+    val successState = Right(()).pure[EditorConfigState[F, *]]
+    def failedState(exitCode: Int) = Left(exitCode).pure[EditorConfigState[F, *]]
     for
       k <- StateT.liftF(editorReadKey())
       config <- StateT.get
-      r <- k match
-        case Char(EXIT) => StateT.liftF(resetScreenCursorTask >> Left(0).pure)
-        case Home       => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> Right(()).pure
-        case End        => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> Right(()).pure
+      r: EitherRawResult[Unit] <- k match
+        case Char(EXIT) => StateT.liftF(resetScreenCursorTask) >> failedState(0)
+        case Home       => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
+        case End        => StateT.modify[F, EditorConfig](e => e.copy(cx = e.screenCols - 1)) >> successState
         case Arrow(a) =>
-          editorMoveCursor(a) >> StateT.liftF(Right(()).pure)
+          editorMoveCursor(a) >> successState
         case Page(a) =>
-          editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> StateT
-            .liftF(Right(()).pure)
-        case _ => StateT.liftF(Right(()).pure)
+          StateT.modify[F, EditorConfig] { e =>
+            val cy = a match
+              case Up   => e.rowoff
+              case Down => e.rowoff + e.screenRows - 1 `min` e.rows.size
+            e.copy(cy = cy)
+          }
+            >> editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> successState
+        case _ => successState
     yield r
+  end editorProcessKeypress
 
   def editorDrawRows[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
     def appendLineBreak(idx: Int): String =
