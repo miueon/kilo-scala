@@ -42,6 +42,7 @@ case class Row(chars: ArrayBuffer[Byte], render: String)
 case class EditorConfig(
     cx: Int,
     cy: Int,
+    rx: Int,
     rowoff: Int,
     coloff: Int,
     screenRows: Int,
@@ -127,14 +128,19 @@ object Main extends IOApp:
       for
         rows <- StateT.liftF(os.read.lines(wd / filename).pure)
         _ <- StateT.modify[F, EditorConfig](c =>
-          c.copy(rows = rows.map(r => 
-            val arr = ArrayBuffer(r.removeSuffixNewLine.getBytes*)
-            Row(arr, editorUpdateRow(arr))).to(ArrayBuffer))
+          c.copy(rows =
+            rows
+              .map(r =>
+                val arr = ArrayBuffer(r.removeSuffixNewLine.getBytes*)
+                Row(arr, editorUpdateRow(arr))
+              )
+              .to(ArrayBuffer)
+          )
         )
       yield ()
     )
 
-  def editorUpdateRow(arr: ArrayBuffer[Byte]): String = 
+  def editorUpdateRow(arr: ArrayBuffer[Byte]): String =
     arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
@@ -282,7 +288,7 @@ object Main extends IOApp:
   end editorDrawRows
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
-    def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.cx - config.coloff + 1}H"
+    def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
     for r <- Ref[F, String]("").pure
     yield ()
     val a = for
@@ -298,17 +304,23 @@ object Main extends IOApp:
     a.run(StringBuilder.newBuilder).map(_._2)
   end editorRefreshScreen
 
+  def editorRowCxToRx(row: Row, cx: Int): Int =
+    row.chars.take(cx).foldLeft(0)((r, c) => r + (if c == '\t' then KILO_TAB_STOP - (r % KILO_TAB_STOP) else 1))
+
   def editorScroll[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
     StateT.modify(c =>
+      val rx = c.cy match
+        case cy if cy < c.rows.size => editorRowCxToRx(c.rows(cy), c.cx)
+        case _                      => 0
       val rowoff = c.cy match
         case cy if cy < c.rowoff                 => cy
         case cy if cy >= c.rowoff + c.screenRows => cy - c.screenRows + 1
         case _: Int                              => c.rowoff
-      val coloff = c.cx match
-        case cx if cx < c.coloff                 => cx
-        case cx if cx >= c.coloff + c.screenCols => cx - c.screenCols + 1
+      val coloff = rx match
+        case rx if rx < c.coloff                 => rx
+        case rx if rx >= c.coloff + c.screenCols => rx - c.screenCols + 1
         case _: Int                              => c.coloff
-      c.copy(rowoff = rowoff, coloff = coloff)
+      c.copy(rowoff = rowoff, coloff = coloff, rx = rx)
     )
 
   def program[F[_]: MonadThrow: Defer](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
@@ -334,7 +346,7 @@ object Main extends IOApp:
   def pureMain(args: List[String]): IO[Unit] =
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ => program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0, 0)).map(_._2))
+      .use(_ => program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0, 0, 0)).map(_._2))
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
           Task.apply(
