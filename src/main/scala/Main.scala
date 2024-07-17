@@ -95,7 +95,13 @@ extension (s: String) def removeSuffixNewLine: String = s.stripSuffix("\n").stri
 object Main extends IOApp:
   inline val escInt = 0x1b
   inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
+  inline val BACKSPACE = 127
   val EXIT = ctrlKey('q')
+  val DELETE_BITS = ctrlKey('h')
+  val REFRESH_SCREEN = ctrlKey('l')
+  val SAVE = ctrlKey('s')
+  val FIND = ctrlKey('f')
+  val GOTO = ctrlKey('g')
   inline val hideCursor = "[?25l"
   inline val showCursor = "[?25h"
   inline val clearScreen = "[2J"
@@ -279,7 +285,7 @@ object Main extends IOApp:
           }
             >> editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> successState
         case Char(c) => editorInsertChar(c) >> successState
-        case _ => successState
+        case _       => successState
     yield r
     end for
   end editorProcessKeypress
