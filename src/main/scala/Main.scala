@@ -175,50 +175,60 @@ object Main extends IOApp:
           }
         yield ()
       )
-    val fc = Zone {
+    val fa = Zone {
       val ref = Ref[F, Ptr[CChar]](alloc())
       read.run((0, ref)).flatMap(_._1._2.get).map(a => !a)
     }
+    def readFollowingKey =
+      val a = stackalloc[CChar]()
+      if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then None
+      else (!a).some
+
+    def readArrow(c: Option[Byte], d: Option[Byte]): Key =
+      (c, d) match
+        case (Some('1' | '7'), Some('~')) => Home
+        case (Some('4' | '8'), Some('~')) => End
+        case (Some('3'), Some('~'))       => Delete
+        case (Some('5'), Some('~'))       => Page(Up)
+        case (Some('6'), Some('~'))       => Page(Down)
+        case (Some('5'), Some('A'))       => CtrlArrow(AKey.Up)
+        case (Some('5'), Some('B'))       => CtrlArrow(AKey.Down)
+        case (Some('5'), Some('C'))       => CtrlArrow(AKey.Right)
+        case (Some('5'), Some('D'))       => CtrlArrow(AKey.Left)
+        case _                            => Escape
     for
-      c <- fc
+      a <- fa
       r <-
-        if c == escInt.toByte then
+        if a == escInt.toByte then
           Defer[F].defer {
             {
-              val a = stackalloc[CChar]()
-              val b = stackalloc[CChar]()
-              val c = stackalloc[CChar]()
-              if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then Escape
-              else if unistd.read(unistd.STDIN_FILENO, b, 1.toUInt) != 1 then Escape
-              else if !a == '[' then
-                (!b) match
-                  case 'A' => Arrow(AKey.Up)
-                  case 'B' => Arrow(AKey.Down)
-                  case 'C' => Arrow(AKey.Right)
-                  case 'D' => Arrow(AKey.Left)
-                  case 'H' => Home
-                  case 'F' => End
-                  case bv if bv >= '0' && bv <= '9' =>
-                    if unistd.read(unistd.STDIN_FILENO, c, 1.toUInt) != 1 then Escape
-                    else if !c == '~' then
-                      bv match
-                        case '1' | '7' => Home
-                        case '4' | '8' => End
-                        case '3'       => Delete
-                        case '5'       => Page(Up)
-                        case '6'       => Page(Down)
-                    else Escape
-                  case _ => Escape
-              else if !a == 'O' then
-                (!b) match
-                  case 'H' => Home
-                  case 'F' => End
-                  case _   => Escape
-              else Escape
-              end if
+              readFollowingKey match
+                case Some('[') =>
+                  readFollowingKey match
+                    case Some('A') => Arrow(AKey.Up)
+                    case Some('B') => Arrow(AKey.Down)
+                    case Some('C') => Arrow(AKey.Right)
+                    case Some('D') => Arrow(AKey.Left)
+                    case Some('H') => Home
+                    case Some('F') => End
+                    case c @ Some(cv) if cv >= '0' && cv <= '9' =>
+                      val d = readFollowingKey
+                      (c, d) match
+                        case (Some('1'), Some(';')) => readArrow(readFollowingKey, readFollowingKey)
+                        case _                      => readArrow(c, d)
+                    case _ => Escape
+                case Some('0') =>
+                  readFollowingKey match
+                    case Some('a') => CtrlArrow(AKey.Up)
+                    case Some('b') => CtrlArrow(AKey.Down)
+                    case Some('c') => CtrlArrow(AKey.Right)
+                    case Some('d') => CtrlArrow(AKey.Left)
+                    case _ => Escape
+                case _ => Escape
+              end match
             }.pure
           }
-        else Char(c).pure
+        else Char(a).pure
     yield r
     end for
   end editorReadKey
@@ -268,8 +278,10 @@ object Main extends IOApp:
       k <- StateT.liftF(editorReadKey())
       config <- StateT.get
       r: EitherRawResult[Unit] <- k match
-        case Char(EXIT) => StateT.liftF(resetScreenCursorTask) >> failedState(0)
-        case Home       => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
+        case Char(EXIT)                          => StateT.liftF(resetScreenCursorTask) >> failedState(0)
+        case Char('\r')                          => ???
+        case Char(BACKSPACE) | Char(DELETE_BITS) => ???
+        case Home                                => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
         case End =>
           StateT.modify[F, EditorConfig](e =>
             if e.cy < e.rows.size then e.copy(cx = e.screenCols - 1) else e
