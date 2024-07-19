@@ -155,6 +155,24 @@ object Main extends IOApp:
       yield ()
     )
 
+  def editorSave[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
+    def editorRowToString(rows: ArrayBuffer[Row]): String =
+      rows.map(_.chars.map(_.toChar).mkString).mkString("\n")
+    for
+      config <- StateT.get[F, EditorConfig]
+      _ <- config.filename.fold(().pure[EditorConfigState[F, *]])(filename =>
+        StateT.liftF(
+          os.write
+            .over(
+              wd / filename,
+              editorRowToString(config.rows),
+              truncate = true
+            )
+            .pure
+        )
+      )
+    yield ()
+
   def editorUpdateRow(arr: ArrayBuffer[Byte]): String =
     arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
 
@@ -223,7 +241,7 @@ object Main extends IOApp:
                     case Some('b') => CtrlArrow(AKey.Down)
                     case Some('c') => CtrlArrow(AKey.Right)
                     case Some('d') => CtrlArrow(AKey.Left)
-                    case _ => Escape
+                    case _         => Escape
                 case _ => Escape
               end match
             }.pure
@@ -279,8 +297,11 @@ object Main extends IOApp:
       config <- StateT.get
       r: EitherRawResult[Unit] <- k match
         case Char(EXIT)                          => StateT.liftF(resetScreenCursorTask) >> failedState(0)
-        case Char('\r')                          => ???
-        case Char(BACKSPACE) | Char(DELETE_BITS) => ???
+        case Char('\r')                          => successState
+        case Char(BACKSPACE) | Char(DELETE_BITS) => successState
+        case Delete                              => successState
+        case Char(REFRESH_SCREEN) | Escape       => successState
+        case Char(SAVE)                          => editorSave >> successState
         case Home                                => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
         case End =>
           StateT.modify[F, EditorConfig](e =>
