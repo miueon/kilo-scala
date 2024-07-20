@@ -59,9 +59,31 @@ case class EditorConfig(
     quitTimes: Int,
     dirty: Boolean,
     statusMsg: Option[StatusMessage] = None,
+    promptMode: Option[PromptMode] = None,
     rows: ArrayBuffer[Row] = ArrayBuffer.empty,
     filename: Option[String] = None
 )
+
+case class CursorState(
+    x: Int = 0,
+    y: Int = 0,
+    roff: Int = 0,
+    coff: Int = 0
+)
+
+object CursorState:
+  def make(e: EditorConfig) =
+    CursorState(
+      e.cx,
+      e.cy,
+      e.rowoff,
+      e.coloff
+    )
+
+enum PromptMode:
+  case Save(str: String)
+  case Find(std: String, cursor: CursorState, lastMatch: Option[Int])
+  case GoTo(Str: String)
 
 type EditorConfigState[F[_], A] = StateT[F, EditorConfig, A]
 
@@ -309,6 +331,60 @@ object Main extends IOApp:
       newConfig.copy(cx = newConfig.cx + 1, dirty = true)
     }
 
+  def editorInsertNewLine[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
+    StateT.modify[F, EditorConfig] { c =>
+      if c.cx == 0 then
+        c.rows.insert(c.cy, Row(ArrayBuffer.empty, ""))
+        c
+      else
+        val row = c.rows(c.cy)
+        val newChars = row.chars.drop(c.cx)
+        val newRow = Row(newChars, editorUpdateRow(newChars))
+        val updatedChars = row.chars.take(c.cx)
+        c.rows.update(c.cy, row.copy(chars = updatedChars, render = editorUpdateRow(updatedChars)))
+        c.rows.insert(c.cy + 1, newRow)
+        c.copy(
+          rows = c.rows,
+          cy = c.cy + 1,
+          cx = 0,
+          dirty = true
+        )
+    }
+
+  def editorDeleteChar[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
+    for
+      _ <- StateT.modify[F, EditorConfig] { c =>
+        val newConfig = c.rows.lift(c.cy) match
+          case Some(row) =>
+            if c.cx == 0 && c.cy == 0 then c
+            else if c.cx > 0 then
+              row.chars.remove(c.cx - 1)
+              c.rows.update(c.cy, row.copy(render = editorUpdateRow(row.chars)))
+              c.copy(cx = c.cx - 1, dirty = true)
+            else if c.cx == 0 then
+              val prevRow = c.rows(c.cy - 1)
+              val prevRowLen = prevRow.chars.size
+              prevRow.chars.appendAll(row.chars)
+              c.rows.update(c.cy - 1, prevRow.copy(render = editorUpdateRow(prevRow.chars)))
+              c.rows.remove(c.cy)
+              c.copy(
+                rows = c.rows,
+                cy = c.cy - 1,
+                cx = prevRowLen,
+                dirty = true
+              )
+            else c
+          case None => c
+        newConfig
+      }
+      config <- StateT.get
+      _ <-
+        if config.cy == config.rows.size then editorMoveCursor(AKey.Left)
+        else ().pure[EditorConfigState[F, *]]
+    yield ()
+    end for
+  end editorDeleteChar
+
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
     val exitSuccessState = Right(()).pure[EditorConfigState[F, *]]
     val successState =
@@ -330,9 +406,9 @@ object Main extends IOApp:
               )
             ) >> exitSuccessState
           else StateT.liftF(resetScreenCursorTask) >> exitState(0)
-        case Char('\r')                          => successState
-        case Char(BACKSPACE) | Char(DELETE_BITS) => successState
-        case Delete                              => successState
+        case Char('\r')                          => editorInsertNewLine >> successState
+        case Char(BACKSPACE) | Char(DELETE_BITS) => editorDeleteChar >> successState
+        case Delete                              => editorMoveCursor(AKey.Right) >> editorDeleteChar >> successState
         case Char(REFRESH_SCREEN) | Escape       => successState
         case Char(SAVE)                          => editorSave >> successState
         case Home                                => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
@@ -457,17 +533,15 @@ object Main extends IOApp:
 
   def program[F[_]: MonadThrow: Defer](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
     def go: EditorConfigState[F, Unit] =
-      val a = for
+      for
         _ <- editorScroll
         config <- StateT.get[F, EditorConfig]
         _ <- StateT.liftF(editorRefreshScreen(config))
+        r <- editorProcessKeypress()
+        _ <- r match
+          case Left(v) => StateT.liftF(MonadThrow[F].raiseError(new Exception(s"Exit code: $v")))
+          case Right(()) => go
       yield ()
-      a >>
-        Monad[StateT[F, EditorConfig, *]].whileM_(
-          editorProcessKeypress().map(_.isRight)
-        )(
-          a
-        )
     for
       _ <- initEditor
       _ <- editorOpen(filenameOpt)
