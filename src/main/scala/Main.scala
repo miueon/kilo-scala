@@ -39,6 +39,7 @@ import scala.util.Try
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
 inline val KILO_MSG = "HELP: Ctrl-S = save | Ctrl-Q = quit"
+inline val KILO_QUIT_TIMES = 3
 
 case class Row(chars: ArrayBuffer[Byte], render: String)
 
@@ -55,6 +56,7 @@ case class EditorConfig(
     coloff: Int,
     screenRows: Int,
     screenCols: Int,
+    quitTimes: Int,
     dirty: Boolean,
     statusMsg: Option[StatusMessage] = None,
     rows: ArrayBuffer[Row] = ArrayBuffer.empty,
@@ -308,13 +310,26 @@ object Main extends IOApp:
     }
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
-    val successState = Right(()).pure[EditorConfigState[F, *]]
-    def failedState(exitCode: Int) = Left(exitCode).pure[EditorConfigState[F, *]]
+    val exitSuccessState = Right(()).pure[EditorConfigState[F, *]]
+    val successState =
+      StateT.modify[F, EditorConfig](c => c.copy(quitTimes = KILO_QUIT_TIMES)) >>
+        Right(()).pure[EditorConfigState[F, *]]
+    def exitState(exitCode: Int) = Left(exitCode).pure[EditorConfigState[F, *]]
     for
       k <- StateT.liftF(editorReadKey())
       config <- StateT.get
       r: EitherRawResult[Unit] <- k match
-        case Char(EXIT)                          => StateT.liftF(resetScreenCursorTask) >> failedState(0)
+        case Char(EXIT) =>
+          if config.dirty && config.quitTimes > 0 then
+            StateT.modify[F, EditorConfig](c =>
+              c.copy(
+                quitTimes = c.quitTimes - 1,
+                statusMsg = StatusMessage(
+                  s"WARNING!!! File has unsaved changes. Press Ctrl-Q ${c.quitTimes} more times to quit."
+                ).some
+              )
+            ) >> exitSuccessState
+          else StateT.liftF(resetScreenCursorTask) >> exitState(0)
         case Char('\r')                          => successState
         case Char(BACKSPACE) | Char(DELETE_BITS) => successState
         case Delete                              => successState
@@ -465,7 +480,7 @@ object Main extends IOApp:
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
         program[Task](args.headOption)
-          .run(EditorConfig(0, 0, 0, 0, 0, 0, 0, false, StatusMessage(KILO_MSG).some))
+          .run(EditorConfig(0, 0, 0, 0, 0, 0, 0, KILO_QUIT_TIMES, false, StatusMessage(KILO_MSG).some))
           .map(_._2)
       )
       .handleErrorWith(e =>
