@@ -33,11 +33,12 @@ import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.*
+import scala.util.Success
 import scala.util.Try
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
-inline val KILO_MSG = "HELP: Ctrl-Q = quit"
+inline val KILO_MSG = "HELP: Ctrl-S = save | Ctrl-Q = quit"
 
 case class Row(chars: ArrayBuffer[Byte], render: String)
 
@@ -160,18 +161,34 @@ object Main extends IOApp:
       rows.map(_.chars.map(_.toChar).mkString).mkString("\n")
     for
       config <- StateT.get[F, EditorConfig]
-      _ <- config.filename.fold(().pure[EditorConfigState[F, *]])(filename =>
+      content = editorRowToString(config.rows)
+      resultOpt <- config.filename.fold(None.pure[EditorConfigState[F, *]])(filename =>
         StateT.liftF(
-          os.write
-            .over(
+          Try(
+            os.write.over(
               wd / filename,
-              editorRowToString(config.rows),
+              content,
               truncate = true
             )
-            .pure
+          ).toEither.some.pure
+        )
+      )
+      _ <- StateT.modify[F, EditorConfig](c =>
+        resultOpt.fold(c)(result =>
+          c.copy(statusMsg =
+            StatusMessage(
+              result
+                .fold(
+                  e => s"Can't save! I/O error: ${e.getMessage()}",
+                  _ => s"${content.size} bytes written to disk"
+                )
+            ).some
+          )
         )
       )
     yield ()
+    end for
+  end editorSave
 
   def editorUpdateRow(arr: ArrayBuffer[Byte]): String =
     arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
