@@ -55,6 +55,7 @@ case class EditorConfig(
     coloff: Int,
     screenRows: Int,
     screenCols: Int,
+    dirty: Boolean,
     statusMsg: Option[StatusMessage] = None,
     rows: ArrayBuffer[Row] = ArrayBuffer.empty,
     filename: Option[String] = None
@@ -303,7 +304,7 @@ object Main extends IOApp:
         case None =>
           c.rows.append(Row(ArrayBuffer(char), editorUpdateRow(ArrayBuffer(char))))
           c
-      newConfig.copy(cx = newConfig.cx + 1)
+      newConfig.copy(cx = newConfig.cx + 1, dirty = true)
     }
 
   def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
@@ -380,7 +381,8 @@ object Main extends IOApp:
 
   def editorDrawStatusBar[F[_]: MonadThrow](config: EditorConfig): EditorBufState[F] =
     StateT.modify[F, StringBuilder](bldr =>
-      val fileStatusStr = s"${config.filename.fold("[No Name]")(_.slice(0, 20))} - ${config.rows.size} lines"
+      val fileStatusStr = s"${config.filename
+          .fold("[No Name]")(_.slice(0, 20))} - ${config.rows.size} lines ${if config.dirty then "(modified)" else ""}"
       val currentRowColStr = s"${config.cy + 1}/${config.rows.size}"
       val blankSize = config.screenCols - fileStatusStr.size
       bldr ++= "[7m".esc + fileStatusStr
@@ -462,7 +464,9 @@ object Main extends IOApp:
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
-        program[Task](args.headOption).run(EditorConfig(0, 0, 0, 0, 0, 0, 0, StatusMessage(KILO_MSG).some)).map(_._2)
+        program[Task](args.headOption)
+          .run(EditorConfig(0, 0, 0, 0, 0, 0, 0, false, StatusMessage(KILO_MSG).some))
+          .map(_._2)
       )
       .handleErrorWith(e =>
         resetScreenCursorTask[Task] >>
