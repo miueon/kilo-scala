@@ -149,7 +149,7 @@ object Main extends IOApp:
       case Char('\r')                                          => PromptState.Completed(str)
       case Key.Escape | Key.Char(EXIT)                         => PromptState.Cancelled
       case Key.Char(BACKSPACE) | Char(DELETE_BITS)             => PromptState.Active(str.slice(0, str.size - 1))
-      case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c)
+      case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c.toChar)
       case _                                                   => PromptState.Active(str)
 
   def updateStatusMsg[F[_]: MonadThrow](strOpt: Option[String]): EditorConfigState[F, Unit] =
@@ -172,7 +172,7 @@ object Main extends IOApp:
               updatePromptMode(PromptMode.Save(str).some) >> successState
             case PromptState.Cancelled =>
               updateStatusMsg("Save aborted".some) >> exitPromptMode
-            case PromptState.Completed(str) => saveAndHandleErrors(str) >> exitPromptMode
+            case PromptState.Completed(str) => saveAs(str) >> exitPromptMode
         case _ => ???
   inline def resetScreenCursorTask[F[_]: MonadThrow] =
     print(resetScreenCursorStr).pure
@@ -230,22 +230,23 @@ object Main extends IOApp:
     ).toEither.pure
   end saveContentToFile
 
-  def saveAndHandleErrors[F[_]: MonadThrow](filename: String): EditorConfigState[F, Unit] =
+  def saveAndHandleErrors[F[_]: MonadThrow](filename: String): EditorConfigState[F, Boolean] =
     for
       config <- StateT.get[F, EditorConfig]
       content <- editorRowToString(config.rows).pure[EditorConfigState[F, *]]
       result <- StateT.liftF(saveContentToFile(filename, content))
       _ <- StateT.modify[F, EditorConfig] { c =>
-        c.copy(statusMsg =
-          StatusMessage(
-            result
-              .fold(
-                e => s"Can't save! I/O error: ${e.getMessage()}",
-                _ => s"${content.size} bytes written to disk"
-              )
-          ).some
+        result.fold(
+          e => c.copy(statusMsg = StatusMessage(s"Can't save! I/O error: ${e.getMessage()}").some),
+          _ => c.copy(statusMsg = StatusMessage(s"${content.size} bytes written to disk").some, dirty = false)
         )
       }
+    yield result.isRight
+
+  def saveAs[F[_]: MonadThrow](filename: String): EditorConfigState[F, Unit] =
+    for
+      r <- saveAndHandleErrors(filename)
+      _ <- StateT.modify[F, EditorConfig](c => c.copy(filename = if r then filename.some else c.filename))
     yield ()
 
   def editorRenderRow(arr: ArrayBuffer[Byte]): String =
