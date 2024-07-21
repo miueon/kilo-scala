@@ -219,25 +219,18 @@ object Main extends IOApp:
     arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
-    val read = Monad[StateT[F, (Int, Ref[F, Ptr[CChar]]), *]]
-      .whileM_(
+    def readUntil = Zone {
+      def go(cPtrRef: Ref[F, Ptr[CChar]]): F[CChar] =
         for
-          (_, cPtrRef) <- StateT.get
-          cPtr <- StateT.liftF(cPtrRef.get)
-          nread <- StateT.liftF(unistd.read(unistd.STDIN_FILENO, cPtr, 1.toUInt).pure)
-          _ <- StateT.set((nread, cPtrRef))
-        yield nread != 1
-      )(
-        for
-          (nread, _) <- StateT.get()
-          _ <- StateT.liftF {
-            if nread == -1 then new Exception("read").raiseError else MonadThrow[F].unit
-          }
-        yield ()
-      )
-    val fa = Zone {
+          cPtr <- cPtrRef.get
+          nread <- unistd.read(unistd.STDIN_FILENO, cPtr, 1.toUInt).pure
+          result <- nread match
+            case -1 => MonadThrow[F].raiseError(new Exception("read"))
+            case 1  => (!cPtr).pure
+            case _  => go(cPtrRef)
+        yield result
       val ref = Ref[F, Ptr[CChar]](alloc())
-      read.run((0, ref)).flatMap(_._1._2.get).map(a => !a)
+      go(ref)
     }
     def readFollowingKey =
       val a = stackalloc[CChar]()
@@ -257,7 +250,7 @@ object Main extends IOApp:
         case (Some('5'), Some('D'))       => CtrlArrow(AKey.Left)
         case _                            => Escape
     for
-      a <- fa
+      a <- readUntil
       r <-
         if a == escInt.toByte then
           Defer[F].defer {
@@ -385,14 +378,13 @@ object Main extends IOApp:
     end for
   end editorDeleteChar
 
-  def editorProcessKeypress[F[_]: MonadThrow: Defer](): EditorConfigState[F, EitherRawResult[Unit]] =
+  def editorProcessKeypress[F[_]: MonadThrow: Defer](k: Key): EditorConfigState[F, EitherRawResult[Unit]] =
     val exitSuccessState = Right(()).pure[EditorConfigState[F, *]]
     val successState =
       StateT.modify[F, EditorConfig](c => c.copy(quitTimes = KILO_QUIT_TIMES)) >>
         Right(()).pure[EditorConfigState[F, *]]
     def exitState(exitCode: Int) = Left(exitCode).pure[EditorConfigState[F, *]]
     for
-      k <- StateT.liftF(editorReadKey())
       config <- StateT.get
       r: EitherRawResult[Unit] <- k match
         case Char(EXIT) =>
@@ -537,9 +529,10 @@ object Main extends IOApp:
         _ <- editorScroll
         config <- StateT.get[F, EditorConfig]
         _ <- StateT.liftF(editorRefreshScreen(config))
-        r <- editorProcessKeypress()
+        k <- StateT.liftF(editorReadKey())
+        r <- editorProcessKeypress(k)
         _ <- r match
-          case Left(v) => StateT.liftF(MonadThrow[F].raiseError(new Exception(s"Exit code: $v")))
+          case Left(v)   => StateT.liftF(MonadThrow[F].raiseError(new Exception(s"Exit code: $v")))
           case Right(()) => go
       yield ()
     for
