@@ -148,13 +148,21 @@ object Main extends IOApp:
     k match
       case Char('\r')                                          => PromptState.Completed(str)
       case Key.Escape | Key.Char(EXIT)                         => PromptState.Cancelled
-      case Key.Char(BACKSPACE) | Char(DELETE_BITS)             => PromptState.Active(str.substring(0, str.size - 1))
-      case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c.toChar)
+      case Key.Char(BACKSPACE) | Char(DELETE_BITS)             => PromptState.Active(str.slice(0, str.size - 1))
+      case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c)
       case _                                                   => PromptState.Active(str)
+
+  def updateStatusMsg[F[_]: MonadThrow](strOpt: Option[String]): EditorConfigState[F, Unit] =
+    StateT.modify[F, EditorConfig](_.copy(statusMsg = strOpt.map(StatusMessage(_))))
 
   def updatePromptMode[F[_]: MonadThrow](p: Option[PromptMode]): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig](_.copy(promptMode = p))
   extension [F[_]: MonadThrow](p: PromptMode)
+    def statusMsg: String =
+      p match
+        case PromptMode.Save(str) => s"Save as: ${str}"
+        case _                    => ???
+
     def processKeypress(k: Key): EditorConfigState[F, EitherRawResult[Unit]] =
       val exitPromptMode: EditorConfigState[F, EitherRawResult[Unit]] = updatePromptMode(None) >> successState
       p match
@@ -163,9 +171,7 @@ object Main extends IOApp:
             case PromptState.Active(str) =>
               updatePromptMode(PromptMode.Save(str).some) >> successState
             case PromptState.Cancelled =>
-              StateT.modify[F, EditorConfig](
-                _.copy(promptMode = None, statusMsg = StatusMessage("Save aborted").some)
-              ) >> exitPromptMode
+              updateStatusMsg("Save aborted".some) >> exitPromptMode
             case PromptState.Completed(str) => saveAndHandleErrors(str) >> exitPromptMode
         case _ => ???
   inline def resetScreenCursorTask[F[_]: MonadThrow] =
@@ -241,40 +247,6 @@ object Main extends IOApp:
         )
       }
     yield ()
-
-  def editorSave[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
-    def editorRowToString(rows: ArrayBuffer[Row]): String =
-      rows.map(_.chars.map(_.toChar).mkString).mkString("\n")
-    for
-      config <- StateT.get[F, EditorConfig]
-      content = editorRowToString(config.rows)
-      resultOpt <- config.filename.fold(None.pure[EditorConfigState[F, *]])(filename =>
-        StateT.liftF(
-          Try(
-            os.write.over(
-              wd / filename,
-              content,
-              truncate = true
-            )
-          ).toEither.some.pure
-        )
-      )
-      _ <- StateT.modify[F, EditorConfig](c =>
-        resultOpt.fold(c)(result =>
-          c.copy(statusMsg =
-            StatusMessage(
-              result
-                .fold(
-                  e => s"Can't save! I/O error: ${e.getMessage()}",
-                  _ => s"${content.size} bytes written to disk"
-                )
-            ).some
-          )
-        )
-      )
-    yield ()
-    end for
-  end editorSave
 
   def editorRenderRow(arr: ArrayBuffer[Byte]): String =
     arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
@@ -464,8 +436,10 @@ object Main extends IOApp:
         case Char(BACKSPACE) | Char(DELETE_BITS) => editorDeleteChar >> successState
         case Delete                              => editorMoveCursor(AKey.Right) >> editorDeleteChar >> successState
         case Char(REFRESH_SCREEN) | Escape       => successState
-        case Char(SAVE)                          => editorSave >> successState
-        case Home                                => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
+        case Char(SAVE) =>
+          config.filename.fold(updatePromptMode(PromptMode.Save("").some))(filename => saveAndHandleErrors(filename))
+            >> successState
+        case Home => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
         case End =>
           StateT.modify[F, EditorConfig](e =>
             if e.cy < e.rows.size then e.copy(cx = e.screenCols - 1) else e
@@ -548,7 +522,7 @@ object Main extends IOApp:
     )
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
-    def setCursoer = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
+    def setCursor = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
     for r <- Ref[F, String]("").pure
     yield ()
     val a = for
@@ -556,7 +530,7 @@ object Main extends IOApp:
       _ <- editorDrawRows(config)
       _ <- editorDrawStatusBar(config)
       _ <- editorDrawMessageBar(config)
-      _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStrR(setCursoer, showCursor))
+      _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStrR(setCursor, showCursor))
       bldr <- StateT.get
       _ <- StateT.liftF({
         val s = bldr.toString()
@@ -590,9 +564,10 @@ object Main extends IOApp:
       for
         _ <- editorScroll
         config <- StateT.get[F, EditorConfig]
-        _ <- StateT.liftF(editorRefreshScreen(config))
+        _ <- config.promptMode.fold(().pure[EditorConfigState[F, *]])(p => updateStatusMsg(p.statusMsg.some))
+        _ <- StateT.inspectF(editorRefreshScreen(_))
         k <- StateT.liftF(editorReadKey())
-        r <- editorProcessKeypress(k)
+        r <- config.promptMode.fold(editorProcessKeypress(k))(_.processKeypress(k))
         _ <- r match
           case Left(v)   => StateT.liftF(MonadThrow[F].raiseError(new Exception(s"Exit code: $v")))
           case Right(()) => go
