@@ -1,39 +1,18 @@
 import `macro`.*
 import cats.Defer
-import cats.Eval
-import cats.Monad
 import cats.MonadThrow
-import cats.data.EitherT
-import cats.data.Kleisli
-import cats.data.OptionT
-import cats.data.Reader
-import cats.data.State
 import cats.data.StateT
 import cats.syntax.all.*
 import effect.*
-import effect.*
-import effect.pull.Stream
 import rawmode.*
 import rawmode.all.*
-import rawmode.all.disableRawMode as resetRawMode
-import rawmode.all.enableRawMode as setRawMode
-import util.Utils.*
 
-import java.nio.charset.Charset
 import java.time.Instant
-import java.util.concurrent.Executors
-import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import scala.scalanative.libc.{errno as libcErrno, *}
-import scala.scalanative.posix.cpio
-import scala.scalanative.posix.errno
 import scala.scalanative.posix.sys.ioctl
-import scala.scalanative.posix.termios
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
-import scala.scalanative.unsafe.Tag.USize
 import scala.scalanative.unsigned.*
-import scala.util.Success
 import scala.util.Try
 
 inline val KILO_VERSION = "0.0.1"
@@ -524,8 +503,6 @@ object Main extends IOApp:
 
   def editorRefreshScreen[F[_]: MonadThrow](config: EditorConfig): F[Unit] =
     def setCursor = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
-    for r <- Ref[F, String]("").pure
-    yield ()
     val a = for
       _ <- StateT.modify[F, StringBuilder](_ ++= escJoinStr(hideCursor, resetCursor))
       _ <- editorDrawRows(config)

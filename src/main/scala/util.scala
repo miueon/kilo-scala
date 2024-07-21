@@ -1,6 +1,5 @@
 package util
 
-import scala.scalanative.unsigned.UInt
 import scala.scalanative.libc.stdlib
 import scala.scalanative.unsafe.*
 

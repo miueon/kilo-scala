@@ -1,7 +1,9 @@
 import bindgen.interface.Includes
 scalaVersion := "3.4.2" // A Long Term Support version.
 // ThisBuild / usePipelining := true
-
+Global / scalacOptions := Seq(
+  "-Wunused:all"
+)
 enablePlugins(ScalaNativePlugin, BindgenPlugin)
 import bindgen.interface.Binding
 

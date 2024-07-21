@@ -2,8 +2,6 @@ package effect
 import cats.MonadThrow
 import cats.syntax.all.*
 import effect.pull.*
-import cats.Monad
-import cats.MonadError
 
 abstract class Resource[F[_], A]:
   def use[B](f: A => F[B]): F[B]

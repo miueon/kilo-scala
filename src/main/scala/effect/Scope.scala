@@ -5,7 +5,6 @@ import java.lang.RuntimeException
 import cats.Monad
 import cats.syntax.all.*
 import cats.MonadThrow
-import cats.instances.finiteDuration
 
 final class Ref[F[_], A] private (
     underlying: AtomicReference[A],

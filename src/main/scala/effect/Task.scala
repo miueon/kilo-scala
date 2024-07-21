@@ -4,7 +4,6 @@ import java.util.concurrent.ExecutorService
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import par.Par
-import cats.Monad
 import cats.syntax.all.*
 import cats.MonadThrow
 // import gears.async.Async

@@ -1,17 +1,10 @@
 package rawmode
 import scala.scalanative.libc.*
 import scala.scalanative.posix.termios
-import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
-import scala.scalanative.unsafe.Tag.USize
-import scala.scalanative.unsigned.UInt
-import cats.MonadThrow
 import rawmode.all.{disableRawMode as resetRawMode, enableRawMode as setRawMode}
 import cats.Monad
-import effect.Task
-import cats.Eval
 import util.Utils.*
-import cats.syntax.all.*
 import cats.Defer
 
 object TerminOSOps:

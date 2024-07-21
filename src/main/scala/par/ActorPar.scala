@@ -4,7 +4,6 @@ import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.Executors
 import cats.Monad
 import cats.Applicative
 

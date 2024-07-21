@@ -1,7 +1,6 @@
 package effect
 
 import cats.Monad
-import cats.syntax.all.*
 import effect.free.Free
 import par.Par
 import par.Par.{*, given}
@@ -9,10 +8,7 @@ import par.Par.{*, given}
 // import gears.async.*
 
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.ForkJoinPool
-import scala.io.StdIn.*
-import cats.MonadError
 // import gears.async.default.given
 
 opaque type IO[A] = Free[Par, A]

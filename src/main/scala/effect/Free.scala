@@ -3,13 +3,6 @@ package effect.free
 import effect.*
 import cats.Monad
 import cats.syntax.all.*
-import par.Par
-
-import java.util.concurrent.Executor
-import java.util.concurrent.Executors
-import java.util.concurrent.ForkJoinPool
-import scala.util.Try
-
 
 enum Free[+F[_], A]:
   case Return(a: A) extends Free[Nothing, A]
