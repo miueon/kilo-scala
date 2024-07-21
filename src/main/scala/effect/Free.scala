@@ -58,9 +58,6 @@ enum Free[+F[_], A]:
     runFree([x] => (fx: F[x]) => Suspend(fToG(fx)))
     // runFree returns `GG` here is Free[G, A]
 
-type Async[A] = Free[Par, A]
-type TailRec[A] = Free[Function0, A]
-
 object Free:
   given freeMonad[F[_]]: Monad[[x] =>> Free[F, x]] with
     def flatMap[A, B](fa: Free[F, A])(f: A => Free[F, B]): Free[F, B] =
@@ -71,38 +68,3 @@ object Free:
         case Left(a)  => tailRecM(a)(f)
         case Right(b) => Return(b)
       }
-
-  given function0Monad: Monad[Function0] with
-    def pure[A](x: A): () => A = () => x
-    def flatMap[A, B](fa: () => A)(f: A => () => B): () => B = () => f(fa())()
-    def tailRecM[A, B](a: A)(f: A => () => Either[A, B]): () => B =
-      f(a)() match
-        case Left(a)      => tailRecM(a)(f)
-        case Right(value) => () => value
-
-  extension [A](fa: TailRec[A])
-    @annotation.tailrec
-    def runTrampoline: A = fa match
-      case Return(a)  => a
-      case Suspend(r) => r()
-      case FlatMap(sub, k) =>
-        sub match
-          case Return(a)  => k(a).runTrampoline
-          case Suspend(r) => k(r()).runTrampoline
-          case FlatMap(y, g) =>
-            y.flatMap(a => g(a).flatMap(k)).runTrampoline
-
-// @main
-// def test =
-//   val f1 =
-//     for
-//       _ <- Console.printLn("Test println")
-//       ln <- readLn
-//       _ <- ln match
-//         case Some(v) => Console.printLn(v)
-//         case None    => Console.printLn("n")
-//     yield ln
-
-//   val v = f1.runFree([t] => (x: Console[t]) => x.toPar).run
-
-//   println(v(ForkJoinPool()))

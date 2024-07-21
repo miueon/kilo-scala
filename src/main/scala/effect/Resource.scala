@@ -10,13 +10,6 @@ abstract class Resource[F[_], A]:
 
 object Resource:
   def make[F[_]: MonadThrow, A](acquire: F[A])(release: A => F[Unit]): Resource[F, A] =
-    // Stream
     new Resource[F, A]:
       def use[B](f: A => F[B]): F[B] =
         Stream.resource(acquire)(release).mapEval(f).toList.map(_.headOption.get)
-
-  // def eval[F[_]: MonadThrow, A](fa: F[A]): Resource[F, A] = 
-  //   new Resource[F, A] {
-  //     def use[B](f: A => F[B]): F[B] = 
-  //       fa.flatMap(f)
-  //   }
