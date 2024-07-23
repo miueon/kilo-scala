@@ -31,13 +31,15 @@ nativeConfig ~= { c =>
     .withGC(GC.boehm) // commix
     .withMultithreading(true)
     .withIncrementalCompilation(true)
-    .withCompileOptions(List(
-      "-DGC_NPROCS=8",
-      "-DGC_MAXIMUM_HEAP_SIZE=20 * 1024 * 1024",
-      "-DGC_LOG_FILE=/tmp/gc.log",
-      "-DGC_ONLY_LOG_TO_FILE",
-      "-DGC_PRINT_STATS"
-    ))
+    .withCompileOptions(
+      List(
+        "-DGC_NPROCS=8",
+        "-DGC_MAXIMUM_HEAP_SIZE=20 * 1024 * 1024",
+        "-DGC_LOG_FILE=/tmp/gc.log",
+        "-DGC_ONLY_LOG_TO_FILE",
+        "-DGC_PRINT_STATS"
+      )
+    )
 }
 
 ThisBuild / scalacOptions ++= List(
@@ -45,9 +47,10 @@ ThisBuild / scalacOptions ++= List(
   "-language:implicitConversions,higherKinds,existentials",
   "-feature",
   "-Wshadow:type-parameter-shadow",
-  "-Wunused:all",
+  "-Wunused:all"
 )
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
 ThisBuild / libraryDependencies += "com.lihaoyi" %%% "os-lib" % "0.10.2"
+ThisBuild / libraryDependencies += "com.lihaoyi" %%% "fansi" % "0.5.0"
 ThisBuild / libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test
