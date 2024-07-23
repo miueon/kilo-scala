@@ -14,6 +14,10 @@ import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 import scala.util.Try
+import util.Utils.*
+import scala.util.boundary
+import scala.util.boundary.break
+import scala.util.boundary.Label
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
@@ -37,7 +41,16 @@ inline val welcome = "Kilo editor -- version " + KILO_VERSION
 inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
 def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
-case class Row(chars: ArrayBuffer[Byte], render: String)
+case class Row(chars: ArrayBuffer[Byte], render: String, matchSegment: Option[Range] = None):
+  def rx2cx(rx: Int): Int =
+    var currentRx = 0
+    boundary {
+      chars.zipWithIndex.foreach { case (c, cx) =>
+        currentRx += (if c == '\t' then KILO_TAB_STOP - (currentRx % KILO_TAB_STOP) else 1)
+        if currentRx > rx then break(cx)
+      }
+      chars.length
+    }
 
 case class StatusMessage(
     msg: String,
@@ -78,7 +91,7 @@ object CursorState:
 
 enum PromptMode:
   case Save(str: String)
-  case Find(std: String, cursor: CursorState, lastMatch: Option[Int])
+  case Find(str: String, cursor: CursorState, lastMatch: Option[Int] = None)
   case GoTo(Str: String)
 
 enum PromptState:
@@ -131,6 +144,9 @@ object Main extends IOApp:
       case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c.toChar)
       case _                                                   => PromptState.Active(str)
 
+  def updateCursor[F[_]: MonadThrow](cursor: CursorState): EditorConfigState[F, Unit] =
+    StateT.modify[F, EditorConfig](_.copy(cx = cursor.x, cy = cursor.y, rowoff = cursor.roff, coloff = cursor.coff))
+
   def updateStatusMsg[F[_]: MonadThrow](strOpt: Option[String]): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig](_.copy(statusMsg = strOpt.map(StatusMessage(_))))
 
@@ -139,12 +155,13 @@ object Main extends IOApp:
   extension [F[_]: MonadThrow](p: PromptMode)
     def statusMsg: String =
       p match
-        case PromptMode.Save(str) => s"Save as: ${str}"
-        case _                    => ???
+        case PromptMode.Save(str)       => s"Save as: ${str}"
+        case PromptMode.Find(str, _, _) => s"Search (Use ESC/Arrows/Enter): ${str}"
+        case _                          => ???
 
     def processKeypress(k: Key): EditorConfigState[F, EitherRawResult[Unit]] =
       val exitPromptMode: EditorConfigState[F, EitherRawResult[Unit]] = updatePromptMode(None) >> successState
-      p match
+      val result = p match
         case PromptMode.Save(str) =>
           processPromptKeypress(str, k) match
             case PromptState.Active(str) =>
@@ -152,7 +169,67 @@ object Main extends IOApp:
             case PromptState.Cancelled =>
               updateStatusMsg("Save aborted".some) >> exitPromptMode
             case PromptState.Completed(str) => saveAs(str) >> exitPromptMode
+        case PromptMode.Find(str, cursor, lastMatch) =>
+          StateT.modify[F, EditorConfig] { c =>
+            lastMatch.fold(c)(idx =>
+              c.rows(idx) = c.rows(idx).copy(matchSegment = None); c
+            )
+          } >> {
+            processPromptKeypress(str, k) match
+              case PromptState.Active(query) =>
+                val (lastMatch1, isForward) = k match
+                  case Arrow(AKey.Right) | Arrow(AKey.Down) | Char(FIND) => (lastMatch, true)
+                  case Arrow(AKey.Left) | Arrow(AKey.Up)                 => (lastMatch, false)
+                  case _                                                 => (None, true)
+                editorFind(query, cursor, lastMatch1, isForward) >> successState
+
+              case PromptState.Cancelled    => updateCursor(cursor) >> exitPromptMode 
+              case PromptState.Completed(_) => exitPromptMode
+          }
         case _ => ???
+      for
+        _ <- updateStatusMsg(None)
+        r <- result
+      yield r
+    end processKeypress
+  end extension
+
+  def editorFind[F[_]: MonadThrow](
+      query: String,
+      savedCursor: CursorState,
+      lastMatch: Option[Int],
+      isForward: Boolean
+  ): EditorConfigState[F, Unit] =
+    type CurPOS = Int
+    type RowPOS = Int
+    @annotation.tailrec
+    def go(rows: ArrayBuffer[Row], pos: Int, idx: Int): Option[(CurPOS, RowPOS)] =
+      if idx >= rows.size then None
+      else
+        val curPos = (pos + (if isForward then 1 else rows.size - 1)) % rows.size
+        val row = rows(curPos)
+        val matchRowPos = row.render.indexOf(query)
+        if matchRowPos != -1 then (curPos, matchRowPos).some
+        else go(rows, curPos, idx + 1)
+    for
+      config <- StateT.get[F, EditorConfig]
+      numRows = config.rows.size
+      current = lastMatch.getOrElse(numRows `saturatingSub` 1)
+      _ <- go(config.rows, current, 0).fold(updatePromptMode(PromptMode.Find(query, savedCursor, None).some))(
+        (curPOS, rowPOS) =>
+          StateT.modify[F, EditorConfig] { c =>
+            config.rows(curPOS) = config.rows(curPOS).copy(matchSegment = (rowPOS until rowPOS + query.size).some)
+            c.copy(
+              cy = curPOS,
+              cx = config.rows(curPOS).rx2cx(rowPOS),
+              coloff = 0
+            )
+          }
+            >> updatePromptMode(PromptMode.Find(query, savedCursor, curPOS.some).some)
+      )
+    yield ()
+  end editorFind
+
   inline def resetScreenCursorTask[F[_]: MonadThrow] =
     print(resetScreenCursorStr).pure
 
@@ -419,6 +496,8 @@ object Main extends IOApp:
         case Char(SAVE) =>
           config.filename.fold(updatePromptMode(PromptMode.Save("").some))(filename => saveAndHandleErrors(filename))
             >> successState
+        case Char(FIND) =>
+          updatePromptMode(PromptMode.Find("", CursorState.make(config)).some) >> successState
         case Home => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
         case End =>
           StateT.modify[F, EditorConfig](e =>

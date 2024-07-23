@@ -8,3 +8,6 @@ object Utils:
 
   extension (s: String) def hexToChar = Integer.parseInt(s, 16).toChar
 
+  extension (i: Int)
+    infix def saturatingSub(j: Int) = if i < j then 0 else i - j
+

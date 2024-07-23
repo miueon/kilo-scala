@@ -1,9 +1,7 @@
 import bindgen.interface.Includes
 scalaVersion := "3.4.2" // A Long Term Support version.
 // ThisBuild / usePipelining := true
-Global / scalacOptions := Seq(
-  "-Wunused:all"
-)
+
 enablePlugins(ScalaNativePlugin, BindgenPlugin)
 import bindgen.interface.Binding
 
@@ -46,7 +44,8 @@ ThisBuild / scalacOptions ++= List(
   "-Ykind-projector",
   "-language:implicitConversions,higherKinds,existentials",
   "-feature",
-  "-Xlint:type-parameter-shadow"
+  "-Wshadow:type-parameter-shadow",
+  "-Wunused:all",
 )
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
 ThisBuild / libraryDependencies += "com.lihaoyi" %%% "os-lib" % "0.10.2"
