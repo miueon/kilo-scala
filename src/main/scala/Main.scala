@@ -8,7 +8,6 @@ import rawmode.*
 import rawmode.all.*
 
 import java.time.Instant
-import scala.collection.mutable.ArrayBuffer
 import scala.scalanative.posix.sys.ioctl
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
@@ -21,7 +20,7 @@ import scala.util.boundary.Label
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
-inline val KILO_MSG = "HELP: Ctrl-S = save | Ctrl-Q = quit"
+inline val KILO_MSG = "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find"
 inline val KILO_QUIT_TIMES = 3
 inline val escInt = 0x1b
 inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
@@ -41,7 +40,7 @@ inline val welcome = "Kilo editor -- version " + KILO_VERSION
 inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
 def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
-case class Row(chars: ArrayBuffer[Byte], render: String, matchSegment: Option[Range] = None):
+case class Row(chars: Vector[Byte], render: String, matchSegment: Option[Range] = None):
   def rx2cx(rx: Int): Int =
     var currentRx = 0
     boundary {
@@ -69,9 +68,10 @@ case class EditorConfig(
     dirty: Boolean,
     statusMsg: Option[StatusMessage] = None,
     promptMode: Option[PromptMode] = None,
-    rows: ArrayBuffer[Row] = ArrayBuffer.empty,
+    rows: Vector[Row] = Vector.empty,
     filename: Option[String] = None
-)
+):
+  def currentRow: Option[Row] = rows.get(cy)
 
 case class CursorState(
     x: Int = 0,
@@ -171,9 +171,7 @@ object Main extends IOApp:
             case PromptState.Completed(str) => saveAs(str) >> exitPromptMode
         case PromptMode.Find(str, cursor, lastMatch) =>
           StateT.modify[F, EditorConfig] { c =>
-            lastMatch.fold(c)(idx =>
-              c.rows(idx) = c.rows(idx).copy(matchSegment = None); c
-            )
+            lastMatch.fold(c)(idx => c.copy(rows = c.rows.updated(idx, c.rows(idx).copy(matchSegment = None))))
           } >> {
             processPromptKeypress(str, k) match
               case PromptState.Active(query) =>
@@ -183,7 +181,7 @@ object Main extends IOApp:
                   case _                                                 => (None, true)
                 editorFind(query, cursor, lastMatch1, isForward) >> successState
 
-              case PromptState.Cancelled    => updateCursor(cursor) >> exitPromptMode 
+              case PromptState.Cancelled    => updateCursor(cursor) >> exitPromptMode
               case PromptState.Completed(_) => exitPromptMode
           }
         case _ => ???
@@ -203,7 +201,7 @@ object Main extends IOApp:
     type CurPOS = Int
     type RowPOS = Int
     @annotation.tailrec
-    def go(rows: ArrayBuffer[Row], pos: Int, idx: Int): Option[(CurPOS, RowPOS)] =
+    def go(rows: Vector[Row], pos: Int, idx: Int): Option[(CurPOS, RowPOS)] =
       if idx >= rows.size then None
       else
         val curPos = (pos + (if isForward then 1 else rows.size - 1)) % rows.size
@@ -218,11 +216,11 @@ object Main extends IOApp:
       _ <- go(config.rows, current, 0).fold(updatePromptMode(PromptMode.Find(query, savedCursor, None).some))(
         (curPOS, rowPOS) =>
           StateT.modify[F, EditorConfig] { c =>
-            config.rows(curPOS) = config.rows(curPOS).copy(matchSegment = (rowPOS until rowPOS + query.size).some)
             c.copy(
               cy = curPOS,
               cx = config.rows(curPOS).rx2cx(rowPOS),
-              coloff = 0
+              coloff = 0,
+              rows = c.rows.updated(curPOS, c.rows(curPOS).copy(matchSegment = (rowPOS until rowPOS + query.size).some))
             )
           }
             >> updatePromptMode(PromptMode.Find(query, savedCursor, curPOS.some).some)
@@ -264,17 +262,17 @@ object Main extends IOApp:
           c.copy(
             rows = rows
               .map(r =>
-                val arr = ArrayBuffer(r.removeSuffixNewLine.getBytes*)
+                val arr = Vector(r.removeSuffixNewLine.getBytes*)
                 Row(arr, editorRenderRow(arr))
               )
-              .to(ArrayBuffer),
+              .to(Vector),
             filename = filename.some
           )
         )
       yield ()
     )
 
-  def editorRowToString(rows: ArrayBuffer[Row]): String =
+  def editorRowToString(rows: Seq[Row]): String =
     rows.map(_.chars.map(_.toChar).mkString).mkString("\n")
   def saveContentToFile[F[_]: MonadThrow](filename: String, content: String): F[Either[Throwable, Unit]] =
     Try(
@@ -305,7 +303,7 @@ object Main extends IOApp:
       _ <- StateT.modify[F, EditorConfig](c => c.copy(filename = if r then filename.some else c.filename))
     yield ()
 
-  def editorRenderRow(arr: ArrayBuffer[Byte]): String =
+  def editorRenderRow(arr: Seq[Byte]): String =
     arr.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
 
   def editorReadKey[F[_]: MonadThrow: Defer](): F[Key] =
@@ -395,39 +393,37 @@ object Main extends IOApp:
           case AKey.Up   => if e.cy != 0 then e.copy(cy = e.cy - 1) else e
           case AKey.Down => if e.cy < e.rows.size then e.copy(cy = e.cy + 1) else e
       }
-      _ <- StateT.modify[F, EditorConfig] { e =>
-        val rowLen = e.rows.lift(e.cy).fold(0)(_.chars.size)
-        e.copy(cx = e.cx `min` rowLen)
-      }
+      _ <- editorUpdateCursorXPosition
     yield ()
+
+  def editorUpdateCursorXPosition[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
+    StateT.modify[F, EditorConfig] { e =>
+      e.copy(cx = e.cx `min` e.currentRow.map(_.chars.size).getOrElse(0))
+    }
 
   def editorInsertChar[F[_]: MonadThrow](char: Byte): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { c =>
       val newConfig = c.rows.lift(c.cy) match
         case Some(row) =>
-          row.chars.insert(c.cx, char)
-          c.rows.update(c.cy, row.copy(render = editorRenderRow(row.chars)))
-          c
+          val insertedChars = row.chars.patch(c.cx, List(char), 0)
+          c.copy(rows = c.rows.updated(c.cy, row.copy(chars = insertedChars, render = editorRenderRow(insertedChars))))
         case None =>
-          c.rows.append(Row(ArrayBuffer(char), editorRenderRow(ArrayBuffer(char))))
-          c
+          c.copy(rows = c.rows.appended(Row(Vector(char), editorRenderRow(List(char)))))
       newConfig.copy(cx = newConfig.cx + 1, dirty = true)
     }
 
   def editorInsertNewLine[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { c =>
-      if c.cx == 0 then
-        c.rows.insert(c.cy, Row(ArrayBuffer.empty, ""))
-        c
+      if c.cx == 0 then c.copy(rows = c.rows.patch(c.cy, List(Row(Vector.empty, "")), 0))
       else
         val row = c.rows(c.cy)
         val newChars = row.chars.drop(c.cx)
         val newRow = Row(newChars, editorRenderRow(newChars))
         val updatedChars = row.chars.take(c.cx)
-        c.rows.update(c.cy, row.copy(chars = updatedChars, render = editorRenderRow(updatedChars)))
-        c.rows.insert(c.cy + 1, newRow)
+        val updated = c.rows.updated(c.cy, row.copy(chars = updatedChars, render = editorRenderRow(updatedChars)))
+        val inserted = updated.patch(c.cy + 1, List(newRow), 0)
         c.copy(
-          rows = c.rows,
+          rows = inserted,
           cy = c.cy + 1,
           cx = 0,
           dirty = true
@@ -441,17 +437,23 @@ object Main extends IOApp:
           case Some(row) =>
             if c.cx == 0 && c.cy == 0 then c
             else if c.cx > 0 then
-              row.chars.remove(c.cx - 1)
-              c.rows.update(c.cy, row.copy(render = editorRenderRow(row.chars)))
-              c.copy(cx = c.cx - 1, dirty = true)
+              val removedCxChars = row.chars.patch(c.cx - 1, Nil, 1)
+              val updatedRows = c.rows.updated(
+                c.cy,
+                row.copy(chars = removedCxChars, render = editorRenderRow(removedCxChars))
+              )
+              c.copy(cx = c.cx - 1, dirty = true, rows = updatedRows)
             else if c.cx == 0 then
               val prevRow = c.rows(c.cy - 1)
               val prevRowLen = prevRow.chars.size
-              prevRow.chars.appendAll(row.chars)
-              c.rows.update(c.cy - 1, prevRow.copy(render = editorRenderRow(prevRow.chars)))
-              c.rows.remove(c.cy)
+              val appendedPrevRowChars = prevRow.chars.appendedAll(row.chars)
+              val updatedRows = c.rows.updated(
+                c.cy - 1,
+                prevRow.copy(chars = appendedPrevRowChars, render = editorRenderRow(appendedPrevRowChars))
+              )
+              val removedCyRows = updatedRows.patch(c.cy, Nil, 1)
               c.copy(
-                rows = c.rows,
+                rows = removedCyRows,
                 cy = c.cy - 1,
                 cx = prevRowLen,
                 dirty = true
@@ -500,19 +502,17 @@ object Main extends IOApp:
           updatePromptMode(PromptMode.Find("", CursorState.make(config)).some) >> successState
         case Home => StateT.modify[F, EditorConfig](_.copy(cx = 0)) >> successState
         case End =>
-          StateT.modify[F, EditorConfig](e =>
-            if e.cy < e.rows.size then e.copy(cx = e.screenCols - 1) else e
-          ) >> successState
+          StateT.modify[F, EditorConfig](e => e.copy(cx = e.currentRow.map(_.chars.size).getOrElse(0))) >> successState
         case Arrow(a) =>
           editorMoveCursor(a) >> successState
         case Page(a) =>
           StateT.modify[F, EditorConfig] { e =>
             val cy = a match
-              case Up   => e.rowoff
-              case Down => e.rowoff + e.screenRows - 1 `min` e.rows.size
+              case Up   => e.rowoff `saturatingSub` e.screenRows
+              case Down => (e.rowoff + 2 * e.screenRows - 1) `min` e.rows.size
             e.copy(cy = cy)
           }
-            >> editorMoveCursor(if a == Up then AKey.Up else AKey.Down).replicateA_(config.screenRows) >> successState
+            >> editorUpdateCursorXPosition >> successState
         case Char(c) => editorInsertChar(c) >> successState
         case _       => successState
     yield r
