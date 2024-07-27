@@ -17,11 +17,15 @@ import util.Utils.*
 import scala.util.boundary
 import scala.util.boundary.break
 import scala.util.boundary.Label
+import java.nio.file.NoSuchFileException
+import os.Path
+import cats.data.Validated
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
 inline val KILO_MSG = "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find"
 inline val KILO_QUIT_TIMES = 3
+inline val KILO_SYNTAX_DIR = "syntax"
 inline val escInt = 0x1b
 inline def ctrlKey(c: CChar): CChar = (c & 0x1f).toByte
 inline val BACKSPACE = 127
@@ -40,7 +44,124 @@ inline val welcome = "Kilo editor -- version " + KILO_VERSION
 inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
 def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
 
-case class Row(chars: Vector[Byte], render: String, matchSegment: Option[Range] = None):
+enum HighlightType:
+  def color: Int
+  case Normal(color: Int = 39)
+  case Number(color: Int = 31)
+  case Match(color: Int = 46)
+  case Str(color: Int = 32)
+  case MLStr(color: Int = 132)
+  case Comment(color: Int = 34)
+  case MLComment(color: Int = 134)
+  case Keyword1(color: Int = 33)
+  case Keyword2(color: Int = 35)
+
+case class SyntaxConfig(
+    name: String = "",
+    hightlightNumbers: Boolean = false,
+    highlightSlStrs: Boolean = false,
+    slCommentStart: Vector[String] = Vector.empty,
+    mlCommentDelim: Option[(String, String)] = None,
+    mlStrDelim: Option[String] = None,
+    keywords: Vector[(HighlightType, Vector[String])] = Vector.empty
+)
+
+object SyntaxConfig:
+  def load[F[_]: MonadThrow](ext: String): F[Option[SyntaxConfig]] =
+    def go(idx: Int, entries: IndexedSeq[Path]): F[Option[SyntaxConfig]] =
+      if idx >= entries.size then none.pure
+      else
+        val entry = entries(idx)
+        for
+          lines <- os.read.lines(entry).pure[F]
+          (syntaxConfig, exts) <- parseSyntaxConfig(lines)
+          result <- if exts.contains(ext) then syntaxConfig.some.pure[F] else go(idx + 1, entries)
+        yield result
+    val readResult = for
+      entries <- os.list(wd / KILO_SYNTAX_DIR).pure[F]
+      syntaxConfigOpt <- go(0, entries)
+    yield syntaxConfigOpt
+    readResult.handleErrorWith(e =>
+      if e.isInstanceOf[NoSuchFileException] then None.pure else MonadThrow[F].raiseError(e)
+    )
+
+  def parseSyntaxConfig[F[_]: MonadThrow](lines: IndexedSeq[String]): F[(SyntaxConfig, List[String])] =
+    lines.toList.traverse(parseLine).flatMap { validatedConfigs =>
+      val (errors, r) = validatedConfigs.separate
+      if errors.nonEmpty then (new Exception(errors.mkString(", "))).raiseError
+      else
+        val (config, exts) = r.separate
+        val mergedConfig = config.fold(SyntaxConfig())((acc, conf) =>
+          acc.copy(
+            name = if conf.name.nonEmpty then conf.name else acc.name,
+            hightlightNumbers = conf.hightlightNumbers || acc.hightlightNumbers,
+            highlightSlStrs = conf.highlightSlStrs || acc.highlightSlStrs,
+            slCommentStart = conf.slCommentStart.appendedAll(acc.slCommentStart),
+            mlCommentDelim = conf.mlCommentDelim.orElse(acc.mlCommentDelim),
+            mlStrDelim = conf.mlStrDelim.orElse(acc.mlStrDelim),
+            keywords = conf.keywords.appendedAll(acc.keywords)
+          )
+        )
+        (mergedConfig, exts.flatten).pure
+    }
+  end parseSyntaxConfig
+
+  def parseLine[F[_]: MonadThrow](line: String): F[Validated[String, Either[SyntaxConfig, List[String]]]] =
+    val parts = line.split("=", 2)
+    if parts.length != 2 then s"Invalid line: $line".invalid.pure
+    else
+      val key = parts(0).trim
+      val value = parts(1).trim
+      parseKeyValue(key, value)
+
+  def parseKeyValue[F[_]: MonadThrow](
+      key: String,
+      value: String
+  ): F[Validated[String, Either[SyntaxConfig, List[String]]]] =
+    key match
+      case "name"       => SyntaxConfig(name = value).asLeft.valid.pure
+      case "extensions" => value.split(",").map(_.trim).toList.asRight.valid.pure
+      case "highlight_numbers" =>
+        parseBool(value).map(v => SyntaxConfig(hightlightNumbers = v).asLeft[List[String]].valid[String])
+      case "highlight_strings" => parseBool(value).map(v => SyntaxConfig(highlightSlStrs = v).asLeft.valid)
+      case "singleline_comment_start" =>
+        SyntaxConfig(slCommentStart = value.split(",").map(_.trim).toVector).asLeft.valid.pure
+      case "multiline_comment_start" =>
+        val delims = value.split(",").map(_.trim)
+        if delims.length != 2 then "Expected 2 delimiters for multiline comment".invalid.pure
+        else SyntaxConfig(mlCommentDelim = (delims(0), delims(1)).some).asLeft.valid.pure
+      case "multiline_string_delim" => SyntaxConfig(mlStrDelim = value.some).asLeft.valid.pure
+      case "keywords_1" =>
+        SyntaxConfig(keywords =
+          Vector((HighlightType.Keyword1(), value.split(",").map(_.trim).toVector))
+        ).asLeft.valid.pure
+      case "keywords_2" =>
+        SyntaxConfig(keywords =
+          Vector((HighlightType.Keyword2(), value.split(",").map(_.trim).toVector))
+        ).asLeft.valid.pure
+      case _ => s"Invalid key: $key".invalid.pure
+  end parseKeyValue
+
+  def parseBool[F[_]: MonadThrow](value: String): F[Boolean] =
+    value.toLowerCase() match
+      case "true" | "1" | "yes" => true.pure
+      case "false" | "0" | "no" => false.pure
+      case _                    => new IllegalArgumentException(s"Invalid boolean value: $value").raiseError
+end SyntaxConfig
+
+enum HLState:
+  case Normal
+  case MultiLineComment
+  case Str(c: Byte)
+  case MultiLineStr
+
+case class Row(
+    chars: Vector[Byte],
+    render: String = "",
+    hl: Vector[HighlightType] = Vector.empty,
+    hlState: HLState = HLState.Normal,
+    matchSegment: Option[Range] = None
+):
   def rx2cx(rx: Int): Int =
     var currentRx = 0
     boundary {
@@ -50,6 +171,10 @@ case class Row(chars: Vector[Byte], render: String, matchSegment: Option[Range] 
       }
       chars.length
     }
+
+  def update(syntax: SyntaxConfig, previousHlState: HLState): (HLState, Row) =
+    ???
+end Row
 
 case class StatusMessage(
     msg: String,
@@ -67,11 +192,39 @@ case class EditorConfig(
     quitTimes: Int,
     dirty: Boolean,
     statusMsg: Option[StatusMessage] = None,
+    syntax: SyntaxConfig = SyntaxConfig(),
     promptMode: Option[PromptMode] = None,
     rows: Vector[Row] = Vector.empty,
     filename: Option[String] = None
 ):
   def currentRow: Option[Row] = rows.get(cy)
+end EditorConfig
+
+object EditorConfig:
+  extension (rows: Vector[Row])
+    def updateRowSyntaxAndRender(y: Int, syntax: SyntaxConfig, isIgnoreFollowingRows: Boolean): Vector[Row] =
+      @annotation.tailrec
+      def go(idx: Int, rows: Vector[Row], hlState: HLState): Vector[Row] =
+        if idx >= rows.size then rows
+        else
+          val previousHlState = rows(idx).hlState
+          val (nextRowHlState, updatedRow) = rows(idx).update(syntax, hlState)
+          val updatedRows = rows.updated(idx, updatedRow)
+          if isIgnoreFollowingRows || nextRowHlState == previousHlState then updatedRows
+          else go(idx + 1, updatedRows, nextRowHlState)
+
+      val hlState = if y > 0 then rows(y - 1).hlState else HLState.Normal
+      go(y, rows, hlState)
+
+    def updateAllRowsSyntaxAndRender(syntax: SyntaxConfig): Vector[Row] =
+      rows
+        .foldLeft((HLState.Normal, Vector.empty[Row]))((b, row) =>
+          val (nextRowHlState, updatedRow) = row.update(syntax, b._1)
+          (nextRowHlState, b._2.appended(updatedRow))
+        )
+        ._2
+  end extension
+end EditorConfig
 
 case class CursorState(
     x: Int = 0,
@@ -132,6 +285,7 @@ val wd = os.pwd
 
 extension (s: String) def removeSuffixNewLine: String = s.stripSuffix("\n").stripSuffix("\r")
 
+import EditorConfig.*
 object Main extends IOApp:
 
   def isAsciiControl(byte: Byte): Boolean =
@@ -254,13 +408,15 @@ object Main extends IOApp:
           StateT.modify[F, EditorConfig](_.copy(screenRows = row - 2, screenCols = col))
     yield ()
 
+  // def loadSyntaxHighlight(path: )
+
   def editorOpen[F[_]: MonadThrow](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
     filenameOpt.fold[EditorConfigState[F, Unit]]((()).pure)(filename =>
       for
-        rows <- StateT.liftF(os.read.lines(wd / filename).pure)
+        contents <- StateT.liftF(os.read.lines(wd / filename).pure)
         _ <- StateT.modify[F, EditorConfig](c =>
           c.copy(
-            rows = rows
+            rows = contents
               .map(r =>
                 val arr = Vector(r.removeSuffixNewLine.getBytes*)
                 Row(arr, editorRenderRow(arr))
@@ -403,31 +559,35 @@ object Main extends IOApp:
 
   def editorInsertChar[F[_]: MonadThrow](char: Byte): EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { c =>
-      val newConfig = c.rows.lift(c.cy) match
+      val updatedRows = c.rows.lift(c.cy) match
         case Some(row) =>
           val insertedChars = row.chars.patch(c.cx, List(char), 0)
-          c.copy(rows = c.rows.updated(c.cy, row.copy(chars = insertedChars, render = editorRenderRow(insertedChars))))
+          c.rows.updated(c.cy, row.copy(chars = insertedChars))
         case None =>
-          c.copy(rows = c.rows.appended(Row(Vector(char), editorRenderRow(List(char)))))
-      newConfig.copy(cx = newConfig.cx + 1, dirty = true)
+          c.rows.appended(Row(Vector(char)))
+      val updatedSyntaxRows = updatedRows.updateRowSyntaxAndRender(c.cy, c.syntax, false)
+      c.copy(cx = c.cx + 1, dirty = true, rows = updatedSyntaxRows)
     }
 
   def editorInsertNewLine[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
     StateT.modify[F, EditorConfig] { c =>
-      if c.cx == 0 then c.copy(rows = c.rows.patch(c.cy, List(Row(Vector.empty, "")), 0))
-      else
-        val row = c.rows(c.cy)
-        val newChars = row.chars.drop(c.cx)
-        val newRow = Row(newChars, editorRenderRow(newChars))
-        val updatedChars = row.chars.take(c.cx)
-        val updated = c.rows.updated(c.cy, row.copy(chars = updatedChars, render = editorRenderRow(updatedChars)))
-        val inserted = updated.patch(c.cy + 1, List(newRow), 0)
-        c.copy(
-          rows = inserted,
-          cy = c.cy + 1,
-          cx = 0,
-          dirty = true
-        )
+      val addedNewLineRows =
+        if c.cx == 0 then c.rows.patch(c.cy, List(Row(Vector.empty)), 0)
+        else
+          val row = c.rows(c.cy)
+          val updatedChars = row.chars.take(c.cx)
+          val updated = c.rows.updated(c.cy, row.copy(chars = updatedChars))
+          val updatedSyntax = updated.updateRowSyntaxAndRender(c.cy, c.syntax, true)
+          val newChars = row.chars.drop(c.cx)
+          val newRow = Row(newChars)
+          val inserted = updatedSyntax.patch(c.cy + 1, List(newRow), 0)
+          inserted.updateRowSyntaxAndRender(c.cy + 1, c.syntax, false)
+      c.copy(
+        rows = addedNewLineRows,
+        cy = c.cy + 1,
+        cx = 0,
+        dirty = true
+      )
     }
 
   def editorDeleteChar[F[_]: MonadThrow]: EditorConfigState[F, Unit] =
@@ -440,20 +600,22 @@ object Main extends IOApp:
               val removedCxChars = row.chars.patch(c.cx - 1, Nil, 1)
               val updatedRows = c.rows.updated(
                 c.cy,
-                row.copy(chars = removedCxChars, render = editorRenderRow(removedCxChars))
+                row.copy(chars = removedCxChars)
               )
-              c.copy(cx = c.cx - 1, dirty = true, rows = updatedRows)
+              val updatedSyntax = updatedRows.updateRowSyntaxAndRender(c.cy, c.syntax, false)
+              c.copy(cx = c.cx - 1, dirty = true, rows = updatedSyntax)
             else if c.cx == 0 then
+              val removedCyRows = c.rows.patch(c.cy, Nil, 1)
               val prevRow = c.rows(c.cy - 1)
               val prevRowLen = prevRow.chars.size
               val appendedPrevRowChars = prevRow.chars.appendedAll(row.chars)
-              val updatedRows = c.rows.updated(
+              val updatedRows = removedCyRows.updated(
                 c.cy - 1,
-                prevRow.copy(chars = appendedPrevRowChars, render = editorRenderRow(appendedPrevRowChars))
+                prevRow.copy(chars = appendedPrevRowChars)
               )
-              val removedCyRows = updatedRows.patch(c.cy, Nil, 1)
+              val updatedSyntax = updatedRows.updateRowSyntaxAndRender(c.cy - 1, c.syntax, true)
               c.copy(
-                rows = removedCyRows,
+                rows = updatedSyntax,
                 cy = c.cy - 1,
                 cx = prevRowLen,
                 dirty = true
