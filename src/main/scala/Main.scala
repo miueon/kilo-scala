@@ -20,6 +20,7 @@ import scala.util.boundary.Label
 import java.nio.file.NoSuchFileException
 import os.Path
 import cats.data.Validated
+import cats.data.State
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
@@ -40,6 +41,8 @@ inline val showCursor = "[?25h"
 inline val clearScreen = "[2J"
 inline val eraseInLine = "[K"
 inline val resetCursor = "[H"
+inline val resetFmt = "[0m"
+inline val reverseVideo = "[7m"
 inline val welcome = "Kilo editor -- version " + KILO_VERSION
 inline def resetScreenCursorStr = escJoinStr(clearScreen, resetCursor)
 def escJoinStrR(xs: String*): String = xs.toSeq.mkString(esc, esc, "")
@@ -55,6 +58,10 @@ enum HighlightType:
   case MLComment(color: Int = 134)
   case Keyword1(color: Int = 33)
   case Keyword2(color: Int = 35)
+
+  override def toString(): String = 
+    s"\u001b[${color}m"
+
 
 case class SyntaxConfig(
     name: String = "",
@@ -108,11 +115,12 @@ object SyntaxConfig:
 
   def parseLine[F[_]: MonadThrow](line: String): F[Validated[String, Either[SyntaxConfig, List[String]]]] =
     val parts = line.split("=", 2)
-    if parts.length != 2 then s"Invalid line: $line".invalid.pure
-    else
-      val key = parts(0).trim
-      val value = parts(1).trim
-      parseKeyValue(key, value)
+    (parts.lift(0), parts.lift(1)) match
+      case (Some(commentLine), _) if commentLine.startsWith("#") || commentLine.startsWith(";") =>
+        SyntaxConfig().asLeft.valid.pure
+      case (Some(k), Some(v))           => parseKeyValue(k, v)
+      case (Some(""), None) | (None, _) => SyntaxConfig().asLeft.valid.pure
+      case (Some(_), None)              => "Invalid line: $line".invalid.pure
 
   def parseKeyValue[F[_]: MonadThrow](
       key: String,
@@ -126,7 +134,7 @@ object SyntaxConfig:
       case "highlight_strings" => parseBool(value).map(v => SyntaxConfig(highlightSlStrs = v).asLeft.valid)
       case "singleline_comment_start" =>
         SyntaxConfig(slCommentStart = value.split(",").map(_.trim).toVector).asLeft.valid.pure
-      case "multiline_comment_start" =>
+      case "multiline_comment_delim" =>
         val delims = value.split(",").map(_.trim)
         if delims.length != 2 then "Expected 2 delimiters for multiline comment".invalid.pure
         else SyntaxConfig(mlCommentDelim = (delims(0), delims(1)).some).asLeft.valid.pure
@@ -172,8 +180,129 @@ case class Row(
       chars.length
     }
 
-  def update(syntax: SyntaxConfig, previousHlState: HLState): (HLState, Row) =
-    ???
+  def update(syntax: SyntaxConfig, previousHlState: HLState): (Row, HLState) =
+    val render = chars.flatMap(c => if c == '\t' then " ".repeat(KILO_TAB_STOP) else c.toChar.toString).mkString
+    updateSyntax(syntax, previousHlState).run(this.copy(render = render)).value
+
+  def updateSyntax(syntax: SyntaxConfig, previousHlState: HLState): State[Row, HLState] =
+    State { row =>
+      val line = row.render.getBytes()
+      def findSubStringInLine(i: Int, s: String): Boolean =
+        line.slice(i, i + s.length).sameElements(s.getBytes())
+
+      def isAsciiPunctuation(c: Byte) =
+        c >= '!' && c <= '/' || c >= ':' && c <= '@' || c >= '[' && c <= '`' || c >= '{' && c <= '~'
+      def isSeparator(c: Byte): Boolean = c.toChar.isWhitespace || c == '\u0000' || (isAsciiPunctuation(c) && c != '_')
+
+      def updateHl(
+          i: Int,
+          currentHlState: HLState,
+          currentHlTypes: Vector[HighlightType]
+      ): (HLState, Vector[HighlightType]) =
+        if i >= line.length then (currentHlState, currentHlTypes)
+        else
+          val newState: (HLState, HighlightType, Int) = currentHlState match
+            case HLState.Normal =>
+              syntax.slCommentStart.find(findSubStringInLine(i, _)) match
+                case Some(commentStart) =>
+                  return (HLState.Normal, currentHlTypes ++ Vector.fill(line.length - i)(HighlightType.Comment()))
+                case None =>
+                  syntax.mlCommentDelim
+                    .flatMap { case (start, end) =>
+                      if findSubStringInLine(i, start) then
+                        (HLState.MultiLineComment, HighlightType.MLComment(), start.length).some
+                      else None
+                    }
+                    .orElse {
+                      syntax.mlStrDelim.flatMap { delim =>
+                        if findSubStringInLine(i, delim) then
+                          (HLState.MultiLineStr, HighlightType.MLStr(), delim.length).some
+                        else None
+                      }
+                    }
+                    .getOrElse {
+                      if syntax.highlightSlStrs && (line(i) == '"' || line(i) == '\'') then
+                        (HLState.Str(line(i)), HighlightType.Str(), 1)
+                      else (currentHlState, HighlightType.Normal(), 1)
+                    }
+            case HLState.MultiLineComment =>
+              syntax.mlCommentDelim
+                .flatMap { case (_, end) =>
+                  if findSubStringInLine(i, end) then (HLState.Normal, HighlightType.MLComment(), end.length).some
+                  else None
+                }
+                .getOrElse((currentHlState, HighlightType.MLComment(), 1))
+
+            case HLState.MultiLineStr =>
+              syntax.mlStrDelim
+                .flatMap { delim =>
+                  if findSubStringInLine(i, delim) then (HLState.Normal, HighlightType.MLStr(), delim.length).some
+                  else None
+                }
+                .getOrElse((currentHlState, HighlightType.MLStr(), 1))
+
+            case HLState.Str(quote) =>
+              if line(i) == quote then (HLState.Normal, HighlightType.Str(), 1)
+              else if line(i) == '\\' && i < line.length - 1 then (currentHlState, HighlightType.Str(), 2)
+              else (currentHlState, HighlightType.Str(), 1)
+
+          val (nextState, hlType, advance) = newState
+          val newHlTypes =  (
+            if hlType == HighlightType.Normal() then
+              val prevSep = i == 0 || isSeparator(line(i - 1))
+              val isNumber = syntax.hightlightNumbers && (
+                (line(i).toChar.isDigit && prevSep) || (currentHlTypes.lastOption.contains(
+                  HighlightType.Number()
+                ) && !prevSep && !isSeparator(line(i)))
+              )
+              if isNumber then Vector(HighlightType.Number())
+              else if prevSep then
+                syntax.keywords
+                  .collectFirst {
+                    case (keywordType, keywords)
+                        if keywords.exists(kw =>
+                          findSubStringInLine(i, kw) && (i + kw.length == line.length || isSeparator(
+                            line(i + kw.length)
+                          ))
+                        ) =>
+                      Vector.fill(keywords.find(findSubStringInLine(i, _)).get.length)(keywordType)
+                  }
+                  .getOrElse(Vector(HighlightType.Normal()))
+              else Vector(HighlightType.Normal())
+            else Vector.fill(advance)(hlType)
+          )
+          updateHl(i + newHlTypes.length, nextState, currentHlTypes ++ newHlTypes)
+        end if
+      end updateHl
+      val (finalState, newHl) = updateHl(0, previousHlState, Vector.empty)
+      val newHlState = finalState match
+        case HLState.Str(_) => HLState.Normal
+        case _              => finalState
+      (row.copy(hl = newHl, hlState = newHlState), newHlState)
+    }
+
+  def drawRow(offset: Int, maxLen: Int): String =
+    val bldr = StringBuilder()
+    var currentHlType = HighlightType.Normal()
+    render.zipWithIndex.drop(offset).take(maxLen).foreach { (c, i) =>
+      var hlType = hl(i)
+      if c.isControl then
+        val renderedChar = if c <= 26 then ('@'.toInt + c.toInt).toChar else '?'
+        bldr.append(s"${reverseVideo.esc}$renderedChar${resetFmt.esc}")
+        if currentHlType != HighlightType.Normal then bldr.append(currentHlType)
+      else
+        matchSegment.foreach { range =>
+          if range.contains(i) then hlType = HighlightType.Match()
+          else if i == range.end then bldr.append(resetFmt.esc)
+        }
+        if currentHlType != hlType then
+          bldr.append(hlType)
+          currentHlType = hlType
+        bldr.append(c)
+    }
+    bldr.append(resetFmt.esc)
+    bldr.toString()
+  end drawRow
 end Row
 
 case class StatusMessage(
@@ -208,7 +337,7 @@ object EditorConfig:
         if idx >= rows.size then rows
         else
           val previousHlState = rows(idx).hlState
-          val (nextRowHlState, updatedRow) = rows(idx).update(syntax, hlState)
+          val (updatedRow, nextRowHlState) = rows(idx).update(syntax, hlState)
           val updatedRows = rows.updated(idx, updatedRow)
           if isIgnoreFollowingRows || nextRowHlState == previousHlState then updatedRows
           else go(idx + 1, updatedRows, nextRowHlState)
@@ -218,10 +347,10 @@ object EditorConfig:
 
     def updateAllRowsSyntaxAndRender(syntax: SyntaxConfig): Vector[Row] =
       rows
-        .foldLeft((HLState.Normal, Vector.empty[Row]))((b, row) =>
-          val (nextRowHlState, updatedRow) = row.update(syntax, b._1)
-          (nextRowHlState, b._2.appended(updatedRow))
-        )
+        .foldLeft((HLState.Normal, Vector.empty[Row])) { case ((hlStateAcc, rowAcc), row) =>
+          val (updatedRow, nextRowHlState) = row.update(syntax, hlStateAcc)
+          (nextRowHlState, rowAcc.appended(updatedRow))
+        }
         ._2
   end extension
 end EditorConfig
@@ -408,20 +537,31 @@ object Main extends IOApp:
           StateT.modify[F, EditorConfig](_.copy(screenRows = row - 2, screenCols = col))
     yield ()
 
-  // def loadSyntaxHighlight(path: )
+  def loadSyntaxHighlight[F[_]: MonadThrow](path: Path): EditorConfigState[F, Unit] =
+    StateT.modifyF[F, EditorConfig](c =>
+      val ext = path.ext
+      if ext.isBlank() then c.pure
+      else
+        SyntaxConfig.load[F](ext).map {
+          case Some(syntax) => c.copy(syntax = syntax)
+          case None         => c
+        }
+    )
 
   def editorOpen[F[_]: MonadThrow](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
     filenameOpt.fold[EditorConfigState[F, Unit]]((()).pure)(filename =>
       for
+        _ <- loadSyntaxHighlight(wd / filename)
         contents <- StateT.liftF(os.read.lines(wd / filename).pure)
+        rows = contents
+          .map(r =>
+            val arr = Vector(r.removeSuffixNewLine.getBytes*)
+            Row(arr)
+          )
+          .to(Vector)
         _ <- StateT.modify[F, EditorConfig](c =>
           c.copy(
-            rows = contents
-              .map(r =>
-                val arr = Vector(r.removeSuffixNewLine.getBytes*)
-                Row(arr, editorRenderRow(arr))
-              )
-              .to(Vector),
+            rows = rows.updateAllRowsSyntaxAndRender(c.syntax),
             filename = filename.some
           )
         )
@@ -456,7 +596,11 @@ object Main extends IOApp:
   def saveAs[F[_]: MonadThrow](filename: String): EditorConfigState[F, Unit] =
     for
       r <- saveAndHandleErrors(filename)
-      _ <- StateT.modify[F, EditorConfig](c => c.copy(filename = if r then filename.some else c.filename))
+      _ <- loadSyntaxHighlight(wd / filename)
+      _ <- StateT.modify[F, EditorConfig](c =>
+        val rows = c.rows.updateAllRowsSyntaxAndRender(c.syntax)
+        c.copy(rows = rows, filename = if r then filename.some else c.filename)
+      )
     yield ()
 
   def editorRenderRow(arr: Seq[Byte]): String =
@@ -695,15 +839,7 @@ object Main extends IOApp:
         .foldLeft(bldr)((bldr, v) =>
           bldr ++= (v match
             case (Some(row), idx) =>
-              val len = row.render.size - config.coloff `max` 0
-              row.render
-                .drop(config.coloff)
-                .slice(0, if len > config.screenCols then config.screenCols else len)
-                .map(_.toChar)
-                .mkString
-                ++ appendLineBreak
-            // s"Test $idx ${config.rowoff} ${config.screenRows} cy=${config.cy}"
-            //   ++ appendLineBreak(idx)
+              row.drawRow(config.coloff, config.screenCols) ++ appendLineBreak
             case (None, idx) =>
               (if config.rows.isEmpty && idx == (config.screenRows / 3) then
                  val welcomeDisplayLen = if welcome.size > config.screenCols then config.screenCols else welcome.size
