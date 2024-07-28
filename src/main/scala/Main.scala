@@ -1,26 +1,26 @@
 import `macro`.*
 import cats.Defer
 import cats.MonadThrow
+import cats.data.State
 import cats.data.StateT
+import cats.data.Validated
 import cats.syntax.all.*
 import effect.*
+import os.Path
 import rawmode.*
 import rawmode.all.*
+import util.Utils.*
 
+import java.nio.file.NoSuchFileException
 import java.time.Instant
 import scala.scalanative.posix.sys.ioctl
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 import scala.util.Try
-import util.Utils.*
 import scala.util.boundary
-import scala.util.boundary.break
 import scala.util.boundary.Label
-import java.nio.file.NoSuchFileException
-import os.Path
-import cats.data.Validated
-import cats.data.State
+import scala.util.boundary.break
 
 inline val KILO_VERSION = "0.0.1"
 inline val KILO_TAB_STOP = 2
