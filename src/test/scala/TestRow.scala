@@ -1,5 +1,7 @@
 import cats.syntax.all.*
-import Row.*
+import domain.Row.*
+import domain.*
+import domain.HighlightType.*
 
 class TestRow extends munit.FunSuite:
   test("test update syntax") {
@@ -13,7 +15,12 @@ class TestRow extends munit.FunSuite:
       keywords = Vector((HighlightType.Keyword1(), Vector("def", "case", "catch")))
     )
     val (updatedRow, hlState) = row.update(syntaxConfig, HLState.Normal)
-    println(updatedRow.chars.map(_.toChar).mkString)
-    println(updatedRow.hl.map(_.color).mkString(", "))
-    println(hlState)
+    assertEquals(
+      updatedRow.hl,
+      Vector.fill(4)(HighlightType.Keyword1()) ++ Vector(HighlightType.Normal()) ++ Vector.fill(4)(
+        HighlightType.Keyword1()
+      )
+    )
+    assertEquals(hlState, HLState.Normal)
   }
+end TestRow
