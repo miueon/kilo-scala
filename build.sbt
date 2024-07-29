@@ -26,8 +26,8 @@ import scala.scalanative.build.*
 
 // defaults set with common options shown
 nativeConfig ~= { c =>
-  c.withLTO(LTO.none) // thin
-    .withMode(Mode.debug) // releaseFast
+  c.withLTO(LTO.full) // thin
+    .withMode(Mode.releaseSize) // releaseFast
     .withGC(GC.boehm) // commix
     .withMultithreading(true)
     .withIncrementalCompilation(true)
@@ -51,6 +51,5 @@ ThisBuild / scalacOptions ++= List(
 )
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
 ThisBuild / libraryDependencies += "com.lihaoyi" %%% "os-lib" % "0.10.2"
-ThisBuild / libraryDependencies += "com.lihaoyi" %%% "fansi" % "0.5.0"
 ThisBuild / libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test
