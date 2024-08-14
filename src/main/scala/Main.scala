@@ -4,28 +4,33 @@ import cats.MonadThrow
 import cats.data.StateT
 import cats.syntax.all.*
 import domain.*
-import editor.*
-import editor.Editor.*
 import effect.*
 import rawmode.*
+import services.EditorConfigState
+import services.EditorOps
+import services.SyntaxConfigOps
 
 object Main extends IOApp:
-  def program[F[_]: MonadThrow: Defer](filenameOpt: Option[String]): EditorConfigState[F, Unit] =
-    def go: EditorConfigState[F, Unit] =
+  def program[F[_]: MonadThrow: Defer: EditorConfigState](filenameOpt: Option[String]): F[Unit] =
+    val syntaxOps = SyntaxConfigOps.make
+    val editorOps = EditorOps.make(syntaxOps)
+    def go: F[Unit] =
       for
-        _ <- editorScroll
-        config <- StateT.get[F, EditorConfig]
-        _ <- config.promptMode.fold(().pure[EditorConfigState[F, *]])(p => updateStatusMsg(p.statusMsg.some))
-        _ <- StateT.inspectF(editorRefreshScreen(_))
-        k <- StateT.liftF(editorReadKey())
-        r <- config.promptMode.fold(editorProcessKeypress(k))(_.processKeypress(k))
+        _ <- editorOps.updateWindowsSize
+        _ <- editorOps.scroll
+        config <- EditorConfigState[F].get
+        _ <- config.promptMode.fold(().pure)(p => editorOps.updateStatusMsg(p.statusMsg.some))
+        config <- EditorConfigState[F].get
+        _ <- editorOps.refreshScreen(config)
+        k <- editorOps.readKey
+        r <- config.promptMode.fold(editorOps.processKeypress(k))(p => editorOps.processPromptKeypress(p, k))
         _ <- r match
-          case Left(v)   => StateT.liftF(MonadThrow[F].raiseError(new Exception(s"Exit code: $v")))
+          case Left(v)   => MonadThrow[F].raiseError(new Exception(s"Exit code: $v"))
           case Right(()) => go
       yield ()
     for
-      _ <- initEditor
-      _ <- editorOpen(filenameOpt)
+      _ <- editorOps.updateWindowsSize
+      _ <- editorOps.openFile(filenameOpt)
       _ <- go
     yield ()
   end program
@@ -34,12 +39,12 @@ object Main extends IOApp:
     Resource
       .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
       .use(_ =>
-        program[Task](args.headOption)
+        program[StateT[Task, EditorConfig, *]](args.headOption)
           .run(EditorConfig(0, 0, 0, 0, 0, 0, 0, KILO_QUIT_TIMES, false, StatusMessage(KILO_MSG).some))
           .map(_._2)
       )
       .handleErrorWith(e =>
-        resetScreenCursor[Task] >>
+        EditorOps.resetScreenCursor[Task] >>
           Task.apply(
             printf(f"%%s\n", e.getMessage())
           )

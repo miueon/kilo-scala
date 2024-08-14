@@ -2,6 +2,27 @@ package domain
 
 import java.time.Instant
 import cats.syntax.all.*
+import scala.scalanative.unsafe.*
+
+enum PageKey:
+  case Up
+  case Down
+
+enum AKey:
+  case Left
+  case Right
+  case Up
+  case Down
+
+enum Key:
+  case Arrow(k: AKey)
+  case CtrlArrow(k: AKey)
+  case Page(k: PageKey)
+  case Home
+  case End
+  case Delete
+  case Escape
+  case Char(c: CChar)
 
 case class CursorState(
     x: Int = 0,
@@ -23,6 +44,25 @@ enum PromptMode:
   case Save(str: String)
   case Find(str: String, cursor: CursorState, lastMatch: Option[Int] = None)
   case GoTo(Str: String)
+
+  def statusMsg: String =
+    this match
+      case PromptMode.Save(str)       => s"Save as: ${str}"
+      case PromptMode.Find(str, _, _) => s"Search (Use ESC/Arrows/Enter): ${str}"
+      case _                          => ???
+
+object PromptMode:
+  def isAsciiControl(byte: Byte): Boolean =
+    byte >= 0 && byte <= 31 || byte == 127
+
+  import Key.*
+  def nextStateByKeypress(str: String, k: Key): PromptState =
+    k match
+      case Char('\r')                                          => PromptState.Completed(str)
+      case Key.Escape | Key.Char(EXIT)                         => PromptState.Cancelled
+      case Key.Char(BACKSPACE) | Char(DELETE_BITS)             => PromptState.Active(str.slice(0, str.size - 1))
+      case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c.toChar)
+      case _                                                   => PromptState.Active(str)
 
 enum PromptState:
   case Active(str: String)
@@ -76,5 +116,9 @@ object EditorConfig:
           (nextRowHlState, rowAcc.appended(updatedRow))
         }
         ._2
+
+    def renderToString: String =
+      rows.map(_.chars.map(_.toChar).mkString).mkString("\n")
+
   end extension
 end EditorConfig
