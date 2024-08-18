@@ -14,7 +14,7 @@ enum HighlightType:
   case Str(color: Int = 32)
   case MLStr(color: Int = 132)
   case Comment(color: Int = 34)
-  case MLComment(color: Int = 134)
+  case MLComment(color: Int = 36)
   case Keyword1(color: Int = 33)
   case Keyword2(color: Int = 35)
 

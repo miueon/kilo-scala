@@ -137,7 +137,7 @@ object EditorOps:
         yield r
         end for
       end processKeypress
-      
+
       def readKey: F[Key] =
         def readUntil = Zone {
           def go(cPtrRef: Ref[F, Ptr[CChar]]): F[CChar] =
@@ -323,41 +323,65 @@ object EditorOps:
           }
         yield result.isRight
 
+      /** Searches for a query string in the rows of the editor, starting from a given position and direction.
+        *
+        * @param query
+        *   The string to search for.
+        * @param savedCursor
+        *   The cursor state to restore if the search is cancelled.
+        * @param lastMatch
+        *   The index of the last matched row, if any.
+        * @param isForward
+        *   Indicates whether the search should proceed forward or backward.
+        * @return
+        *   An effect that updates the editor state with the search results.
+        */
       private def find(
           query: String,
           savedCursor: CursorState,
           lastMatch: Option[Int],
           isForward: Boolean
       ): F[Unit] =
-        type CurPOS = Int
-        type RowPOS = Int
+        // Define types for clarity
+        type CurPOS = Int // Current position in rows
+        type RowPOS = Int // Position within a row
+
+        // Tail-recursive function to search for the query in the rows
         @annotation.tailrec
         def go(rows: Vector[Row], pos: Int, idx: Int): Option[(CurPOS, RowPOS)] =
-          if idx >= rows.size then None
+          if idx >= rows.size then None // If we've checked all rows, return None
           else
-            val curPos = (pos + (if isForward then 1 else rows.size - 1)) % rows.size
-            val row = rows(curPos)
-            val matchRowPos = row.render.indexOf(query)
-            if matchRowPos != -1 then (curPos, matchRowPos).some
-            else go(rows, curPos, idx + 1)
+            val curPos = (pos + (if isForward then 1 else rows.size - 1)) % rows.size // Calculate current position
+            val row = rows(curPos) // Get the current row
+            val matchRowPos = row.render.indexOf(query) // Search for the query in the current row
+            if matchRowPos != -1 then (curPos, matchRowPos).some // If found, return the position
+            else go(rows, curPos, idx + 1) // Otherwise, continue searching
+
+        // Main effectful computation
         for
-          config <- EditorConfigState[F].get
-          numRows = config.rows.size
-          current = lastMatch.getOrElse(numRows `saturatingSub` 1)
-          _ <- go(config.rows, current, 0).fold(updatePromptMode(PromptMode.Find(query, savedCursor, None).some))(
-            (curPOS, rowPOS) =>
-              EditorConfigState[F].modify { c =>
-                c.copy(
-                  cy = curPOS,
-                  cx = config.rows(curPOS).rx2cx(rowPOS),
-                  coloff = 0,
-                  rows =
-                    c.rows.updated(curPOS, c.rows(curPOS).copy(matchSegment = (rowPOS until rowPOS + query.size).some))
-                )
-              }
-                >> updatePromptMode(PromptMode.Find(query, savedCursor, curPOS.some).some)
+          config <- EditorConfigState[F].get // Get the current editor configuration
+          numRows = config.rows.size // Get the number of rows
+          current = lastMatch.getOrElse(numRows `saturatingSub` 1) // Determine the starting position
+          _ <- go(config.rows, current, 0).fold(
+            updatePromptMode(PromptMode.Find(query, savedCursor, None).some) // If not found, update prompt mode
+          )((curPOS, rowPOS) =>
+            EditorConfigState[F].modify { c =>
+              c.copy(
+                cy = curPOS, // Update the vertical cursor position
+                cx = config.rows(curPOS).rx2cx(rowPOS), // Update the horizontal cursor position
+                coloff = 0, // Reset column offset
+                rows = c.rows.updated(
+                  curPOS,
+                  c.rows(curPOS).copy(matchSegment = (rowPOS until rowPOS + query.size).some)
+                ) // Update the matched row
+              )
+            }
+              >> updatePromptMode(
+                PromptMode.Find(query, savedCursor, curPOS.some).some
+              ) // Update prompt mode with new match
           )
         yield ()
+        end for
       end find
 
       private def updateCursor(cursor: CursorState): F[Unit] =
@@ -373,29 +397,52 @@ object EditorOps:
         ).toEither.pure
       end saveContentToFile
 
-
-      private def insertNewLine: F[Unit] =
+      /** Inserts a new line at the current cursor position.
+        *
+        * This method handles two scenarios:
+        *   1. If the cursor is at the beginning of a line, it inserts an empty row. 2. If the cursor is in the middle
+        *      of a line, it splits the current line into two.
+        *
+        * After insertion, it updates the cursor position, marks the file as dirty, and updates syntax highlighting as
+        * needed.
+        */
+      def insertNewLine: F[Unit] =
         EditorConfigState[F].modify { c =>
           val addedNewLineRows =
-            if c.cx == 0 then c.rows.patch(c.cy, List(Row(Vector.empty)), 0)
+            if c.cx == 0 then
+              // Insert an empty row at the current position
+              c.rows.patch(c.cy, List(Row(Vector.empty)), 0)
             else
               val row = c.rows(c.cy)
+              // Split the current row at the cursor position
               val updatedChars = row.chars.take(c.cx)
               val updated = c.rows.updated(c.cy, row.copy(chars = updatedChars))
+              // Update syntax highlighting for the modified row
               val updatedSyntax = updated.updateRowSyntaxAndRender(c.cy, c.syntax, true)
+              // Create a new row with the remaining characters
               val newChars = row.chars.drop(c.cx)
               val newRow = Row(newChars)
+              // Insert the new row and update its syntax highlighting
               val inserted = updatedSyntax.patch(c.cy + 1, List(newRow), 0)
               inserted.updateRowSyntaxAndRender(c.cy + 1, c.syntax, false)
+          // Update the editor configuration
           c.copy(
             rows = addedNewLineRows,
-            cy = c.cy + 1,
-            cx = 0,
-            dirty = true
+            cy = c.cy + 1, // Move cursor to the next line
+            cx = 0, // Move cursor to the beginning of the new line
+            dirty = true // Mark the file as modified
           )
         }
 
-      private def deleteChar: F[Unit] =
+      /** Deletes a character at the current cursor position.
+        *
+        * This method handles different scenarios:
+        *   1. If at the beginning of the file, do nothing. 2. If in the middle of a row, remove the character before
+        *      the cursor. 3. If at the beginning of a row (except the first row), merge with the previous row.
+        *
+        * After deletion, it updates the cursor position and syntax highlighting as needed.
+        */
+      def deleteChar: F[Unit] =
         for
           _ <- EditorConfigState[F].modify { c =>
             val newConfig = c.rows.lift(c.cy) match
@@ -437,7 +484,22 @@ object EditorOps:
         end for
       end deleteChar
 
-      private def moveCursor(key: AKey): F[Unit] =
+      /** Moves the cursor based on the given arrow key input.
+        *
+        * @param key
+        *   The arrow key pressed (Left, Right, Up, or Down)
+        * @return
+        *   A monadic action that updates the editor state
+        *
+        * This method handles cursor movement in four directions:
+        *   - Left: Moves cursor left, or to the end of the previous line if at the start of a line
+        *   - Right: Moves cursor right, or to the start of the next line if at the end of a line
+        *   - Up: Moves cursor up one line, if not already at the top
+        *   - Down: Moves cursor down one line, if not already at the bottom
+        *
+        * After moving the cursor, it calls updateCursorXPosition to ensure the cursor is within bounds.
+        */
+      def moveCursor(key: AKey): F[Unit] =
         for
           _ <- EditorConfigState[F].modify { e =>
             key match

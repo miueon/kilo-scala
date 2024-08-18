@@ -45,12 +45,6 @@ enum PromptMode:
   case Find(str: String, cursor: CursorState, lastMatch: Option[Int] = None)
   case GoTo(Str: String)
 
-  def statusMsg: String =
-    this match
-      case PromptMode.Save(str)       => s"Save as: ${str}"
-      case PromptMode.Find(str, _, _) => s"Search (Use ESC/Arrows/Enter): ${str}"
-      case _                          => ???
-
 object PromptMode:
   def isAsciiControl(byte: Byte): Boolean =
     byte >= 0 && byte <= 31 || byte == 127
@@ -63,6 +57,14 @@ object PromptMode:
       case Key.Char(BACKSPACE) | Char(DELETE_BITS)             => PromptState.Active(str.slice(0, str.size - 1))
       case Char(c) if c >= 0 && c <= 126 && !isAsciiControl(c) => PromptState.Active(str + c.toChar)
       case _                                                   => PromptState.Active(str)
+
+  extension (self: PromptMode)
+    def statusMsg: String =
+      self match
+        case PromptMode.Save(str)       => s"Save as: ${str}"
+        case PromptMode.Find(str, _, _) => s"Search (Use ESC/Arrows/Enter): ${str}"
+        case _                          => ???
+end PromptMode
 
 enum PromptState:
   case Active(str: String)
@@ -89,9 +91,7 @@ case class EditorConfig(
     promptMode: Option[PromptMode] = None,
     rows: Vector[Row] = Vector.empty,
     filename: Option[String] = None
-):
-  def currentRow: Option[Row] = rows.get(cy)
-end EditorConfig
+)
 
 object EditorConfig:
   extension (rows: Vector[Row])
@@ -119,6 +119,7 @@ object EditorConfig:
 
     def renderToString: String =
       rows.map(_.chars.map(_.toChar).mkString).mkString("\n")
-
   end extension
+
+  extension (self: EditorConfig) def currentRow: Option[Row] = self.rows.get(self.cy)
 end EditorConfig
