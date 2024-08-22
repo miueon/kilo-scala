@@ -52,6 +52,5 @@ ThisBuild / scalacOptions ++= List(
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
 ThisBuild / libraryDependencies += "com.lihaoyi" %%% "os-lib" % "0.10.2"
 ThisBuild / libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
-ThisBuild / libraryDependencies += "dev.optics" %%% "monocle-core" % "3.3.0"
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-mtl" % "1.5.0"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test
