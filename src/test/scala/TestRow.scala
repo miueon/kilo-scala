@@ -8,7 +8,7 @@ class TestRow extends munit.FunSuite:
     val line = "case case"
     val row = Row(line.getBytes().toList.toVector)
     val syntaxConfig = SyntaxConfig(
-      hightlightNumbers = true,
+      highlightNumbers = true,
       highlightSlStrs = true,
       slCommentStart = Vector("//"),
       mlCommentDelim = ("/*", "*/").some,

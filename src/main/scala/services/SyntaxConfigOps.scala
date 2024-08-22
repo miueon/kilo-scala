@@ -17,16 +17,16 @@ object SyntaxConfigOps:
   private val wd = os.pwd
   def make[F[_]: MonadThrow]: SyntaxConfigOps[F] =
     new:
-      def load(ext: String): F[Option[SyntaxConfig]] = 
+      def load(ext: String): F[Option[SyntaxConfig]] =
         def go(idx: Int, entries: IndexedSeq[Path]): F[Option[SyntaxConfig]] =
-            if idx >= entries.size then none.pure
-            else
-              val entry = entries(idx)
-              for
-                lines <- os.read.lines(entry).pure[F]
-                (syntaxConfig, exts) <- parseSyntaxConfig(lines)
-                result <- if exts.contains(ext) then syntaxConfig.some.pure[F] else go(idx + 1, entries)
-              yield result
+          if idx >= entries.size then none.pure
+          else
+            val entry = entries(idx)
+            for
+              lines <- os.read.lines(entry).pure[F]
+              (syntaxConfig, exts) <- parseSyntaxConfig(lines)
+              result <- if exts.contains(ext) then syntaxConfig.some.pure[F] else go(idx + 1, entries)
+            yield result
         val readResult = for
           entries <- os.list(wd / KILO_SYNTAX_DIR).pure[F]
           syntaxConfigOpt <- go(0, entries)
@@ -44,7 +44,7 @@ object SyntaxConfigOps:
             val mergedConfig = config.fold(SyntaxConfig())((acc, conf) =>
               acc.copy(
                 name = if conf.name.nonEmpty then conf.name else acc.name,
-                hightlightNumbers = conf.hightlightNumbers || acc.hightlightNumbers,
+                highlightNumbers = conf.highlightNumbers || acc.highlightNumbers,
                 highlightSlStrs = conf.highlightSlStrs || acc.highlightSlStrs,
                 slCommentStart = conf.slCommentStart.appendedAll(acc.slCommentStart),
                 mlCommentDelim = conf.mlCommentDelim.orElse(acc.mlCommentDelim),
@@ -73,7 +73,7 @@ object SyntaxConfigOps:
           case "name"       => SyntaxConfig(name = value).asLeft.valid.pure
           case "extensions" => value.split(",").map(_.trim).toList.asRight.valid.pure
           case "highlight_numbers" =>
-            parseBool(value).map(v => SyntaxConfig(hightlightNumbers = v).asLeft[List[String]].valid[String])
+            parseBool(value).map(v => SyntaxConfig(highlightNumbers = v).asLeft[List[String]].valid[String])
           case "highlight_strings" => parseBool(value).map(v => SyntaxConfig(highlightSlStrs = v).asLeft.valid)
           case "singleline_comment_start" =>
             SyntaxConfig(slCommentStart = value.split(",").map(_.trim).toVector).asLeft.valid.pure
@@ -98,4 +98,4 @@ object SyntaxConfigOps:
           case "true" | "1" | "yes" => true.pure
           case "false" | "0" | "no" => false.pure
           case _                    => new IllegalArgumentException(s"Invalid boolean value: $value").raiseError
-
+end SyntaxConfigOps

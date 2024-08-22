@@ -1,10 +1,11 @@
 package domain
+import `macro`.*
+import cats.data.State
+import cats.syntax.all.*
+
 import scala.util.boundary
 import scala.util.boundary.Label
 import scala.util.boundary.break
-import cats.data.State
-import cats.syntax.all.*
-import `macro`.*
 
 enum HLState:
   case Normal
@@ -66,12 +67,17 @@ object Row:
         val newHlTypes = determineNewHlTypes(i, hlType, currentHlTypes, line, syntax, advance)
         updateHl(i + newHlTypes.length, nextState, currentHlTypes ++ newHlTypes, line, syntax)
 
-    def determineNewState(i: Int, currentHlState: HLState, line: Vector[Byte], syntax: SyntaxConfig): (HLState, HighlightType, Int) =
+    def determineNewState(
+        i: Int,
+        currentHlState: HLState,
+        line: Vector[Byte],
+        syntax: SyntaxConfig
+    ): (HLState, HighlightType, Int) =
       currentHlState match
-        case HLState.Normal => handleNormalState(i, line, syntax)
+        case HLState.Normal           => handleNormalState(i, line, syntax)
         case HLState.MultiLineComment => handleMultiLineCommentState(i, line, syntax)
-        case HLState.MultiLineStr => handleMultiLineStrState(i, line, syntax)
-        case HLState.Str(quote) => handleStrState(i, line, quote)
+        case HLState.MultiLineStr     => handleMultiLineStrState(i, line, syntax)
+        case HLState.Str(quote)       => handleStrState(i, line, quote)
 
     def handleNormalState(i: Int, line: Vector[Byte], syntax: SyntaxConfig): (HLState, HighlightType, Int) =
       syntax.slCommentStart.find(findSubStringInLine(line, i, _)) match
@@ -117,7 +123,14 @@ object Row:
       else if line(i) == '\\' && i < line.length - 1 then (HLState.Str(quote), HighlightType.Str(), 2)
       else (HLState.Str(quote), HighlightType.Str(), 1)
 
-    def determineNewHlTypes(i: Int, hlType: HighlightType, currentHlTypes: Vector[HighlightType], line: Vector[Byte], syntax: SyntaxConfig, advance: Int): Vector[HighlightType] =
+    def determineNewHlTypes(
+        i: Int,
+        hlType: HighlightType,
+        currentHlTypes: Vector[HighlightType],
+        line: Vector[Byte],
+        syntax: SyntaxConfig,
+        advance: Int
+    ): Vector[HighlightType] =
       if hlType == HighlightType.Normal() then
         val prevSep = i == 0 || isSeparator(line(i - 1))
         val isNumber = isNumberHighlight(i, prevSep, currentHlTypes, line, syntax)
@@ -126,9 +139,17 @@ object Row:
         else Vector(HighlightType.Normal())
       else Vector.fill(advance)(hlType)
 
-    def isNumberHighlight(i: Int, prevSep: Boolean, currentHlTypes: Vector[HighlightType], line: Vector[Byte], syntax: SyntaxConfig): Boolean =
-      syntax.hightlightNumbers && (
-        (line(i).toChar.isDigit && prevSep) || (currentHlTypes.lastOption.contains(HighlightType.Number()) && !prevSep && !isSeparator(line(i)))
+    def isNumberHighlight(
+        i: Int,
+        prevSep: Boolean,
+        currentHlTypes: Vector[HighlightType],
+        line: Vector[Byte],
+        syntax: SyntaxConfig
+    ): Boolean =
+      syntax.highlightNumbers && (
+        (line(i).toChar.isDigit && prevSep) || (currentHlTypes.lastOption.contains(
+          HighlightType.Number()
+        ) && !prevSep && !isSeparator(line(i)))
       )
 
     def determineKeywordHighlight(i: Int, line: Vector[Byte], syntax: SyntaxConfig): Vector[HighlightType] =

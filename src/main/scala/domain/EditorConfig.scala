@@ -3,6 +3,7 @@ package domain
 import java.time.Instant
 import cats.syntax.all.*
 import scala.scalanative.unsafe.*
+import cats.mtl.Stateful
 
 enum PageKey:
   case Up
@@ -123,3 +124,7 @@ object EditorConfig:
 
   extension (self: EditorConfig) def currentRow: Option[Row] = self.rows.get(self.cy)
 end EditorConfig
+
+type EditorConfigState[F[_]] = Stateful[F, EditorConfig]
+object EditorConfigState:
+  def apply[F[_]: EditorConfigState] = summon[EditorConfigState[F]]

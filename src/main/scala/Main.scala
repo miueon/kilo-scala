@@ -6,14 +6,16 @@ import cats.syntax.all.*
 import domain.*
 import effect.*
 import rawmode.*
-import services.EditorConfigState
+import domain.EditorConfigState
 import services.EditorOps
 import services.SyntaxConfigOps
+import services.KeyOps
 
 object Main extends IOApp:
   def program[F[_]: MonadThrow: Defer: EditorConfigState](filenameOpt: Option[String]): F[Unit] =
     val syntaxOps = SyntaxConfigOps.make
-    val editorOps = EditorOps.make(syntaxOps)
+    val keyOps = KeyOps.make
+    val editorOps = EditorOps.make(syntaxOps, keyOps)
     def go: F[Unit] =
       for
         _ <- editorOps.updateWindowsSize
