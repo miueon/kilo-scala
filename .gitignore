@@ -10,3 +10,4 @@ a
 c
 c
 .bsp/sbt.json
+**/metals.sbt
