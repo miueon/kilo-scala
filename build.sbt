@@ -26,7 +26,7 @@ import scala.scalanative.build.*
 
 // defaults set with common options shown
 nativeConfig ~= { c =>
-  c.withLTO(LTO.full) // thin
+  c.withLTO(LTO.thin) // thin
     .withMode(Mode.releaseSize) // releaseFast
     .withGC(GC.boehm) // commix
     .withMultithreading(true)
@@ -37,7 +37,13 @@ nativeConfig ~= { c =>
         "-DGC_MAXIMUM_HEAP_SIZE=20 * 1024 * 1024",
         "-DGC_LOG_FILE=/tmp/gc.log",
         "-DGC_ONLY_LOG_TO_FILE",
-        "-DGC_PRINT_STATS"
+        "-DGC_PRINT_STATS",
+      )
+    )
+    .withLinkingOptions(
+      List(
+        "-fuse-ld=lld",
+        "-Wl,--threads=16"
       )
     )
 }

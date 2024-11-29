@@ -242,9 +242,9 @@ object EditorOps:
                 val screenRow = row - 2
                 c.copy(
                   screenRows = screenRow,
-                  screenCols = col,
-                  cx = if c.cx > col then col - 1 else c.cx,
-                  cy = if c.cy > screenRow then screenRow - 1 else c.cy
+                  screenCols = col
+                  // cx = if (c.cx - c.coloff) > col then (c.coloff + col - 1) else c.cx,
+                  // cy = if (c.cy - c.rowoff) > screenRow then (c.rowoff + screenRow - 1) else c.cy
                 )
               )
         yield ()
