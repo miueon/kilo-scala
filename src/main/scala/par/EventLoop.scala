@@ -11,14 +11,15 @@ import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 import scala.scalanative.posix.unistd
 import cats.syntax.all.*
-import java.util.concurrent.ConcurrentLinkedQueue
+import effect.UnsafeQueue
+import effect.Task
 
 object SignalHandler:
-  var eventQueue: ConcurrentLinkedQueue[Event] = null
+  var eventQueue: UnsafeQueue[Event] = null
 
   val sigwinchHandler: CFuncPtr1[CInt, Unit] = (signo: CInt) => {
     if (eventQueue != null) {
-      eventQueue.add(Event.WindowResize)
+      eventQueue.offer(Event.WindowResize)
     }
     ()
   }
@@ -26,7 +27,9 @@ object SignalHandler:
 object EventLoop:
   private final val SIGWINCH = 28 // Not in scala-native posix
 
-  def create(queue: ConcurrentLinkedQueue[Event]): Task[Unit] =
+  def create(
+      queue: UnsafeQueue[Event]
+  ): Task[Unit] =
     Task {
       SignalHandler.eventQueue = queue
       signal.signal(SIGWINCH, SignalHandler.sigwinchHandler)
@@ -35,7 +38,7 @@ object EventLoop:
         while (true) {
           val key = readKey()
           if (queue != null) {
-            queue.add(Event.Key(key))
+            queue.offer(Event.Key(key))
           }
         }
       }

@@ -120,8 +120,8 @@ object EditorOps:
             case Page(a) =>
               EditorConfigState[F].modify { e =>
                 val cy = a match
-                  case Up   => e.rowoff `saturatingSub` e.screenRows
-                  case Down => (e.rowoff + 2 * e.screenRows - 1) `min` e.rows.size
+                  case Up   => (e.cy `saturatingSub` e.screenRows) `max` 0
+                  case Down => (e.cy + e.screenRows) `min` e.rows.size
                 e.copy(cy = cy)
               }
                 >> keyOps.updateCursorXPosition >> successState

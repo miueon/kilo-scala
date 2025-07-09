@@ -6,7 +6,7 @@ import cats.Monad
 import cats.syntax.all.*
 import cats.MonadThrow
 
-final class Ref[F[_], A] private (
+final class ScopeRef[F[_], A] private (
     underlying: AtomicReference[A],
     delay: [A] => (() => A) => F[A]
 ):
@@ -20,9 +20,9 @@ final class Ref[F[_], A] private (
     loop()
   }
 
-object Ref:
-  def apply[F[_]: Monad, A](init: A): Ref[F, A] =
-    new Ref(
+object ScopeRef:
+  def apply[F[_]: Monad, A](init: A): ScopeRef[F, A] =
+    new ScopeRef(
       AtomicReference[A](init),
       [A] => (th: () => A) => ().pure.map(_ => th())
     )
@@ -30,14 +30,14 @@ object Ref:
 final class Scope[F[_]: MonadThrow](
     parent: Option[Scope[F]],
     val id: Id,
-    state: Ref[F, Scope.State[F]]
+    state: ScopeRef[F, Scope.State[F]]
 ):
   import Scope.State
 
   def open(finalizer: F[Unit]): F[Scope[F]] =
     state.modify {
       case State.Open(myFinalizer, subscopes) =>
-        val sub = new Scope(Some(this), new Id, Ref(State.Open(finalizer, Vector.empty)))
+        val sub = new Scope(Some(this), new Id, ScopeRef(State.Open(finalizer, Vector.empty)))
         State.Open(myFinalizer, subscopes :+ sub) -> sub.pure
       case State.Closed() =>
         val next = parent match
@@ -99,4 +99,4 @@ object Scope:
     case Closed() extends State[F]
 
   def root[F[_]: MonadThrow]: Scope[F] =
-    new Scope(None, new Id, Ref(State.Open(().pure, Vector.empty)))
+    new Scope(None, new Id, ScopeRef(State.Open(().pure, Vector.empty)))

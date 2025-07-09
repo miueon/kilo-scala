@@ -12,13 +12,13 @@ import services.SyntaxConfigOps
 import services.KeyOps
 import par.Event
 import par.EventLoop
-import java.util.concurrent.ConcurrentLinkedQueue
 import scala.concurrent.duration.*
+import effect.UnsafeQueue
 
 object Main extends IOApp:
-  def program[F[_]: MonadThrow: Defer: EditorConfigState](
+  def program[F[_]: MonadThrow: Defer: EditorConfigState: LiftTask](
       filenameOpt: Option[String],
-      eventQueue: ConcurrentLinkedQueue[Event]
+      eventQueue: UnsafeQueue[Event]
   ): F[Unit] =
     val syntaxOps = SyntaxConfigOps.make[F]
     val keyOps = KeyOps.make[F]
@@ -32,8 +32,7 @@ object Main extends IOApp:
       yield ()
 
       updateTask.flatMap { _ =>
-        Defer[F].defer(eventQueue.poll().pure).flatMap {
-          case null => (Thread.sleep(1000.millis.toMillis).pure[F] >> loop)
+        LiftTask[F].lift(eventQueue.take).flatMap {
           case Event.Key(k: domain.Key) =>
             EditorConfigState[F].get.flatMap { config =>
               config.promptMode
@@ -58,15 +57,37 @@ object Main extends IOApp:
   end program
 
   def pureMain(args: List[String]): IO[Unit] =
-    val eventQueue = new ConcurrentLinkedQueue[Event]()
-    Resource
-      .make[Task, TermIOS](TermIOS.enableRawMode)(TermIOS.disableRawMode)
-      .use(_ =>
-        Task.fork(EventLoop.create(eventQueue)) >>
-          program[StateT[Task, EditorConfig, *]](args.headOption, eventQueue)
-            .run(EditorConfig(0, 0, 0, 0, 0, 0, 0, KILO_QUIT_TIMES, false, StatusMessage(KILO_MSG).some))
-            .map(_._2)
+    (for
+      eventQueue <- Resource.eval[Task, UnsafeQueue[Event]](
+        UnsafeQueue.unbounded[Event]
       )
+      _ <- Resource.make[Task, Unit](
+        Task.fork(EventLoop.create(eventQueue))
+      )(_ => Task.unit)
+      given MonadThrow[Task] = Task.monad
+      _ <- Resource.make[Task, TermIOS](TermIOS.enableRawMode[Task])(
+        TermIOS.disableRawMode[Task]
+      )
+      res <- Resource.eval[Task, (EditorConfig, Unit)](
+        program[StateT[Task, EditorConfig, *]](
+          args.headOption,
+          eventQueue
+        ).run(
+          EditorConfig(
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            KILO_QUIT_TIMES,
+            false,
+            StatusMessage(KILO_MSG).some
+          )
+        )
+      )
+    yield res).use(_ => Task.unit)
       .handleErrorWith(e =>
         EditorOps.resetScreenCursor[Task] >>
           Task.apply(
