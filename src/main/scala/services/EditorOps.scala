@@ -25,7 +25,6 @@ trait EditorOps[F[_]]:
   def scroll: F[Unit]
   def updateStatusMsg(strOpt: Option[String]): F[Unit]
   def refreshScreen(config: EditorConfig): F[Unit]
-  def readKey: F[Key]
   def processKeypress(k: Key): F[EitherRawResult[Unit]]
   def processPromptKeypress(p: PromptMode, k: Key): F[EitherRawResult[Unit]]
   def openFile(filenameOpt: Option[String]): F[Unit]
@@ -34,7 +33,7 @@ object EditorOps:
   import Key.*
   import PageKey.*
   val wd = os.pwd
-  def make[F[_]: MonadThrow: Defer: EditorConfigState](syntaxConfigOps: SyntaxConfigOps[F], keyOps: KeyOps[F]): EditorOps[F] =
+  def make[F[_]: Defer: EditorConfigState: MonadThrow](syntaxConfigOps: SyntaxConfigOps[F], keyOps: KeyOps[F]): EditorOps[F] =
     new:
       def openFile(filenameOpt: Option[String]): F[Unit] =
         filenameOpt.fold((()).pure)(filename =>
@@ -132,73 +131,6 @@ object EditorOps:
         end for
       end processKeypress
 
-      def readKey: F[Key] =
-        def readUntil = Zone {
-          def go(cPtrRef: Ref[F, Ptr[CChar]]): F[CChar] =
-            for
-              cPtr <- cPtrRef.get
-              nread <- unistd.read(unistd.STDIN_FILENO, cPtr, 1.toUInt).pure
-              result <- nread match
-                case -1 => MonadThrow[F].raiseError(new Exception("read"))
-                case 1  => (!cPtr).pure
-                case _  => go(cPtrRef)
-            yield result
-          val ref = Ref[F, Ptr[CChar]](alloc())
-          go(ref)
-        }
-        def readFollowingKey =
-          val a = stackalloc[CChar]()
-          if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then None
-          else (!a).some
-
-        def readArrow(c: Option[Byte], d: Option[Byte]): Key =
-          (c, d) match
-            case (Some('1' | '7'), Some('~')) => Home
-            case (Some('4' | '8'), Some('~')) => End
-            case (Some('3'), Some('~'))       => Delete
-            case (Some('5'), Some('~'))       => Page(Up)
-            case (Some('6'), Some('~'))       => Page(Down)
-            case (Some('5'), Some('A'))       => CtrlArrow(AKey.Up)
-            case (Some('5'), Some('B'))       => CtrlArrow(AKey.Down)
-            case (Some('5'), Some('C'))       => CtrlArrow(AKey.Right)
-            case (Some('5'), Some('D'))       => CtrlArrow(AKey.Left)
-            case _                            => Escape
-        for
-          a <- readUntil
-          r <-
-            if a == escInt.toByte then
-              Defer[F].defer {
-                {
-                  readFollowingKey match
-                    case Some('[') =>
-                      readFollowingKey match
-                        case Some('A') => Arrow(AKey.Up)
-                        case Some('B') => Arrow(AKey.Down)
-                        case Some('C') => Arrow(AKey.Right)
-                        case Some('D') => Arrow(AKey.Left)
-                        case Some('H') => Home
-                        case Some('F') => End
-                        case c @ Some(cv) if cv >= '0' && cv <= '9' =>
-                          val d = readFollowingKey
-                          (c, d) match
-                            case (Some('1'), Some(';')) => readArrow(readFollowingKey, readFollowingKey)
-                            case _                      => readArrow(c, d)
-                        case _ => Escape
-                    case Some('0') =>
-                      readFollowingKey match
-                        case Some('a') => CtrlArrow(AKey.Up)
-                        case Some('b') => CtrlArrow(AKey.Down)
-                        case Some('c') => CtrlArrow(AKey.Right)
-                        case Some('d') => CtrlArrow(AKey.Left)
-                        case _         => Escape
-                    case _ => Escape
-                  end match
-                }.pure
-              }
-            else Char(a).pure
-        yield r
-        end for
-      end readKey
 
       def refreshScreen(config: EditorConfig): F[Unit] =
         def setCursor = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"

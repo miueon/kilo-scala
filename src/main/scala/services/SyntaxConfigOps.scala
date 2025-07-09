@@ -1,5 +1,6 @@
 package services
 
+import cats.Defer
 import cats.MonadThrow
 import cats.data.Validated
 import cats.syntax.all.*

@@ -28,6 +28,9 @@ object IO:
 
   def forkUnit[A](a: => A): IO[A] = fork(now(a))
 
+  def sleep(d: scala.concurrent.duration.FiniteDuration): IO[Unit] =
+    IO(Thread.sleep(d.toMillis))
+
   extension [A](ioa: IO[A])
     // def unsafeRunSync(using Async): A =
     //   ioa.run.run

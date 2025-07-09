@@ -64,6 +64,9 @@ object Task:
 
   def forkUnit[A](a: => A): Task[A] = fork(apply(a))
 
+  def sleep(d: scala.concurrent.duration.FiniteDuration): Task[Unit] =
+    Task(Thread.sleep(d.toMillis))
+
   given monad: MonadThrow[Task] with
     def pure[A](x: A): Task[A] = Task(x)
     def flatMap[A, B](fa: Task[A])(f: A => Task[B]): Task[B] =
