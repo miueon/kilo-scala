@@ -4,44 +4,34 @@ import domain.Key
 import effect.Task
 import rawmode.all.*
 import domain.*
-import par.Event
 
 import scala.scalanative.posix.signal
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 import scala.scalanative.posix.unistd
-import cats.syntax.all.*
-import effect.UnsafeQueue
-import effect.Task
+import effect.HybridQueue
 
 object SignalHandler:
-  var eventQueue: UnsafeQueue[Event] = null
+  var eventQueue: HybridQueue[Event] = null
 
-  val sigwinchHandler: CFuncPtr1[CInt, Unit] = (signo: CInt) => {
-    if (eventQueue != null) {
-      eventQueue.offer(Event.WindowResize)
-    }
+  val sigwinchHandler: CFuncPtr1[CInt, Unit] = (signo: CInt) =>
+    if eventQueue != null then eventQueue.unsafeOffer(Event.WindowResize)
     ()
-  }
 
 object EventLoop:
   private final val SIGWINCH = 28 // Not in scala-native posix
 
   def create(
-      queue: UnsafeQueue[Event]
+      queue: HybridQueue[Event]
   ): Task[Unit] =
     Task {
       SignalHandler.eventQueue = queue
       signal.signal(SIGWINCH, SignalHandler.sigwinchHandler)
 
-      val keyReader: Runnable = () => {
-        while (true) {
+      val keyReader: Runnable = () =>
+        while true do
           val key = readKey()
-          if (queue != null) {
-            queue.offer(Event.Key(key))
-          }
-        }
-      }
+          if queue != null then queue.unsafeOffer(Event.Key(key))
       val thread = new Thread(keyReader)
       thread.start()
     }
@@ -50,12 +40,12 @@ object EventLoop:
     def readUntil: Byte =
       val buf = stackalloc[Byte]()
       val nread = unistd.read(unistd.STDIN_FILENO, buf, 1.toUInt)
-      if (nread == -1) throw new Exception("read")
+      if nread == -1 then throw new Exception("read")
       !buf
 
     def readFollowingKey: Option[Byte] =
       val a = stackalloc[CChar]()
-      if (unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1) None
+      if unistd.read(unistd.STDIN_FILENO, a, 1.toUInt) != 1 then None
       else Some(!a)
 
     def readArrow(c: Option[Byte], d: Option[Byte]): Key =
@@ -74,7 +64,7 @@ object EventLoop:
         case _                            => Key.Escape
 
     val a = readUntil
-    if (a == escInt.toByte)
+    if a == escInt.toByte then
       readFollowingKey match
         case Some('[') =>
           import domain.AKey
@@ -101,3 +91,6 @@ object EventLoop:
             case _         => Key.Escape
         case _ => Key.Escape
     else Key.Char(a)
+    end if
+  end readKey
+end EventLoop

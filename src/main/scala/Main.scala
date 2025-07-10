@@ -12,13 +12,12 @@ import services.SyntaxConfigOps
 import services.KeyOps
 import par.Event
 import par.EventLoop
-import scala.concurrent.duration.*
-import effect.UnsafeQueue
+import effect.HybridQueue
 
 object Main extends IOApp:
   def program[F[_]: MonadThrow: Defer: EditorConfigState: LiftTask](
       filenameOpt: Option[String],
-      eventQueue: UnsafeQueue[Event]
+      eventQueue: HybridQueue[Event]
   ): F[Unit] =
     val syntaxOps = SyntaxConfigOps.make[F]
     val keyOps = KeyOps.make[F]
@@ -48,6 +47,7 @@ object Main extends IOApp:
             MonadThrow[F].raiseError(new Exception("Exit"))
         }
       }
+    end loop
 
     for
       _ <- editorOps.updateWindowsSize
@@ -58,8 +58,8 @@ object Main extends IOApp:
 
   def pureMain(args: List[String]): IO[Unit] =
     (for
-      eventQueue <- Resource.eval[Task, UnsafeQueue[Event]](
-        UnsafeQueue.unbounded[Event]
+      eventQueue <- Resource.eval[Task, HybridQueue[Event]](
+        HybridQueue.unbounded[Event]
       )
       _ <- Resource.make[Task, Unit](
         Task.fork(EventLoop.create(eventQueue))
@@ -87,7 +87,8 @@ object Main extends IOApp:
           )
         )
       )
-    yield res).use(_ => Task.unit)
+    yield res)
+      .use(_ => Task.unit)
       .handleErrorWith(e =>
         EditorOps.resetScreenCursor[Task] >>
           Task.apply(

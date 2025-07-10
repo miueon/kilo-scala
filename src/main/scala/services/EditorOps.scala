@@ -33,13 +33,16 @@ object EditorOps:
   import Key.*
   import PageKey.*
   val wd = os.pwd
-  def make[F[_]: Defer: EditorConfigState: MonadThrow](syntaxConfigOps: SyntaxConfigOps[F], keyOps: KeyOps[F]): EditorOps[F] =
+  def make[F[_]: Defer: EditorConfigState: MonadThrow](
+      syntaxConfigOps: SyntaxConfigOps[F],
+      keyOps: KeyOps[F]
+  ): EditorOps[F] =
     new:
       def openFile(filenameOpt: Option[String]): F[Unit] =
         filenameOpt.fold((()).pure)(filename =>
-          for
+          (for
             _ <- loadSyntaxHighlight(wd / filename)
-            contents <- os.read.lines(wd / filename).pure
+            contents <- MonadThrow[F].catchNonFatal(os.read.lines(wd / filename))
             rows = contents
               .map(r =>
                 val arr = Vector(r.removeSuffixNewLine.getBytes*)
@@ -52,7 +55,10 @@ object EditorOps:
                 filename = filename.some
               )
             )
-          yield ()
+          yield ()).handleErrorWith { _ =>
+            // If file doesn't exist or can't be read, show status message and continue
+            updateStatusMsg(s"Cannot open file: $filename".some)
+          }
         )
 
       def processPromptKeypress(p: PromptMode, k: Key): F[EitherRawResult[Unit]] =
@@ -103,8 +109,8 @@ object EditorOps:
               else resetScreenCursor >> exitState(0)
             case Char('\r')                          => keyOps.insertNewLine >> successState
             case Char(BACKSPACE) | Char(DELETE_BITS) => keyOps.deleteChar >> successState
-            case Delete                              => keyOps.moveCursor(AKey.Right) >> keyOps.deleteChar >> successState
-            case Char(REFRESH_SCREEN) | Escape       => successState
+            case Delete                        => keyOps.moveCursor(AKey.Right) >> keyOps.deleteChar >> successState
+            case Char(REFRESH_SCREEN) | Escape => successState
             case Char(SAVE) =>
               config.filename.fold(updatePromptMode(PromptMode.Save("").some))(filename =>
                 saveAndHandleErrors(filename).void
@@ -130,7 +136,6 @@ object EditorOps:
         yield r
         end for
       end processKeypress
-
 
       def refreshScreen(config: EditorConfig): F[Unit] =
         def setCursor = s"[${(config.cy - config.rowoff) + 1};${config.rx - config.coloff + 1}H"
