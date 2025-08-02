@@ -103,7 +103,6 @@ src/main/scala/
 - **Ctrl+S**: Save file
 - **Ctrl+Q**: Quit (press multiple times if file is modified)
 - **Ctrl+F**: Find text
-- **Ctrl+G**: Go to line
 - **Arrow keys**: Navigate
 - **Page Up/Down**: Page navigation
 
