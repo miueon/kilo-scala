@@ -38,6 +38,7 @@ class KeyOpsTest extends munit.FunSuite with KeyOpsTestUtils:
     rows = Vector.empty,
     filename = None
   )
+  
 
   test("insertChar") {
     val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[Task, EditorConfig, *]]) =>
@@ -73,10 +74,9 @@ class KeyOpsTest extends munit.FunSuite with KeyOpsTestUtils:
         _ <- keyOps.moveCursor(AKey.Left)
         _ <- keyOps.moveCursor(AKey.Left)
         _ <- keyOps.deleteChar
-      yield {
+      yield
         assertEquals(deleteCharConfig.rows(0).chars, "Hello world".map(_.toByte))
         ()
-      }
     }
 
     assertEquals(finalConfig.rows(0).chars, "Hello wrld".map(_.toByte))

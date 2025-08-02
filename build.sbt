@@ -1,5 +1,5 @@
 import bindgen.interface.Includes
-scalaVersion := "3.4.2" // A Long Term Support version.
+scalaVersion := "3.7.1" // A Long Term Support version.
 // ThisBuild / usePipelining := true
 
 enablePlugins(ScalaNativePlugin, BindgenPlugin)
@@ -46,6 +46,17 @@ nativeConfig ~= { c =>
         "-Wl,--threads=16"
       )
     )
+}
+
+lazy val copyToBin = taskKey[Unit]("Copy native executable to bin directory")
+
+copyToBin := {
+  val executable = (Compile / nativeLink).value
+  val binDir = baseDirectory.value / "bin"
+  IO.createDirectory(binDir)
+  val targetFile = binDir / "kilo-scala"
+  IO.copyFile(executable, targetFile)
+  println(s"Copied executable to ${targetFile}")
 }
 
 ThisBuild / scalacOptions ++= List(
