@@ -15,26 +15,63 @@ Kilo-Scala is a lightweight text editor written in Scala 3 and compiled to a nat
 
 ## Technology Stack
 
-*   [**Scala 3**](https://docs.scala-lang.org/scala3/): A modern, multi-paradigm programming language.
-*   [**Scala Native**](https://scala-native.org/): Compiles Scala code to native executables.
-*   [**Cats**](https://typelevel.org/cats/): A library for functional programming in Scala.
-*   [**Cats Effect**](https://typelevel.org/cats-effect/): A library for managing side effects in a functional way.
+*   [**Scala 3.7.1**](https://docs.scala-lang.org/scala3/): Modern, multi-paradigm programming language with latest LTS version.
+*   [**Scala Native**](https://scala-native.org/): Compiles Scala code to native executables with C FFI support.
+*   [**Cats 2.12.0**](https://typelevel.org/cats/): Functional programming abstractions and type classes.
+*   [**Cats Effect 3.7.0-RC1**](https://typelevel.org/cats-effect/): Pure asynchronous runtime with fiber-based concurrency.
+*   [**Cats MTL 1.5.0**](https://github.com/typelevel/cats-mtl): Monad transformer library for state management.
+*   [**OS-Lib 0.10.2**](https://github.com/com-lihaoyi/os-lib): Cross-platform file system operations.
+*   [**Bindgen Plugin**](https://github.com/indoorvivants/sn-bindgen): Automated C header bindings for Scala Native.
+*   [**MUnit 1.0.0**](https://scalameta.org/munit/): Lightweight testing framework.
 *   [**sbt**](https://www.scala-sbt.org/): The interactive build tool for Scala.
 
 ## Design and Architecture
 
-Kilo-Scala is built with a focus on functional programming and a clean, modular architecture.
+Kilo-Scala demonstrates modern functional programming patterns using the latest Typelevel ecosystem libraries. The architecture emphasizes type safety, composability, and resource management.
 
-*   **Purely Functional:** The application is written in a purely functional style, using the `IO` monad from Cats Effect to handle all side effects. This makes the code more predictable, testable, and easier to reason about.
-*   **State Management:** The editor's state is managed using the `StateT` monad transformer, which allows for a clean separation of state and logic.
-*   **Event-driven:** The application uses an event-driven architecture to handle user input and other events asynchronously. A custom `HybridQueue` is used for efficient event processing.
-*   **Foreign Function Interface (FFI):** Scala Native's FFI is used to interact with the underlying C library for raw terminal mode.
-*   **Modular and Declarative:** The codebase is organized into modules for different concerns (e.g., `domain`, `effect`, `services`), and the code is written in a declarative style.
-*   **Resource Safety:** The `Resource` data type from Cats Effect is used to ensure that resources like files and terminal raw mode are managed safely and reliably.
+*   **Purely Functional:** Built using the `IO` monad from Cats Effect 3.7, ensuring all side effects are properly managed and composed. The application embraces pure functional programming principles throughout.
+*   **Fiber-Based Concurrency:** Uses Cats Effect's lightweight fibers for concurrent operations instead of OS threads. The event loop runs keyboard input and signal handling as separate fibers with proper cancellation support.
+*   **State Management:** Editor state is managed using `StateT[IO, EditorConfig, *]` monad transformer with Cats MTL's `Stateful` type class for clean state operations.
+*   **Event-Driven Architecture:** Asynchronous event processing using `cats.effect.std.Queue` for type-safe, backpressured event handling. Window resize signals and keyboard input are processed concurrently via `Dispatcher`.
+*   **C FFI with Bindgen:** Automated C header bindings using the bindgen plugin for terminal raw mode operations. Direct integration with POSIX APIs for terminal control.
+*   **Modern Scala 3 Features:** Leverages opaque types, enums, extension methods, and indentation-based syntax for clean, type-safe code.
+*   **Resource Safety:** Comprehensive resource management using `Resource` data type ensures proper cleanup of terminal state, file handles, and fiber lifecycles.
+
+## Project Structure
+
+```
+src/main/scala/
+├── Main.scala              # Application entry point with IOApp
+├── domain/                 # Core data types and business logic
+│   ├── EditorConfig.scala  # Editor state and configuration
+│   ├── Row.scala          # Text row representation
+│   ├── SyntaxConfig.scala # Syntax highlighting configuration
+│   └── constants.scala    # Application constants and key bindings
+├── effect/                # Effect type classes and utilities
+│   └── LiftIO.scala       # Type class for lifting IO operations
+├── macro/                 # Compile-time macros
+│   └── escStr.scala       # String escape sequence macros
+├── par/                   # Parallel processing and event handling
+│   ├── Event.scala        # Event types (Key, WindowResize, Quit)
+│   └── EventLoop.scala    # Fiber-based event loop with signal handling
+├── rawmode/               # Terminal raw mode operations
+│   └── TermIOS.scala      # C FFI for terminal control
+├── services/              # Business logic and operations
+│   ├── DrawOps.scala      # Screen drawing and rendering
+│   ├── EditorOps.scala    # Core editor operations
+│   ├── KeyOps.scala       # Keyboard input handling
+│   └── SyntaxConfigOps.scala # Syntax highlighting operations
+└── util.scala             # Utility functions
+```
 
 ## Getting Started
 
-To build and run the project, you need to have Scala and sbt installed.
+### Prerequisites
+- **Java 8+** (for sbt and Scala compilation)
+- **LLVM toolchain** (for Scala Native linking)
+- **sbt 1.9+** (Scala build tool)
+
+### Building and Running
 
 1.  **Clone the repository:**
     ```bash
@@ -44,15 +81,31 @@ To build and run the project, you need to have Scala and sbt installed.
 
 2.  **Build the native executable:**
     ```bash
+    sbt nativeLink
+    # Or copy to bin/ directory:
     sbt copyToBin
     ```
-    This will build the native executable and copy it to the `bin/` directory.
+    This compiles to a native executable with optimizations enabled.
 
 3.  **Run the editor:**
     ```bash
+    ./target/scala-3.7.1/kilo-scala [filename]
+    # Or if using copyToBin:
     ./bin/kilo-scala [filename]
     ```
-    If you don't provide a filename, it will open an empty buffer.
+
+4.  **Run tests:**
+    ```bash
+    sbt test
+    ```
+
+### Keyboard Shortcuts
+- **Ctrl+S**: Save file
+- **Ctrl+Q**: Quit (press multiple times if file is modified)
+- **Ctrl+F**: Find text
+- **Ctrl+G**: Go to line
+- **Arrow keys**: Navigate
+- **Page Up/Down**: Page navigation
 
 ## Contributing
 
