@@ -1,7 +1,6 @@
 import cats.syntax.all.*
-import domain.Row.*
 import domain.*
-import domain.HighlightType.*
+import domain.Row.*
 
 class TestRow extends munit.FunSuite:
   test("test update syntax") {

@@ -1,6 +1,5 @@
 package services
 
-import cats.Defer
 import cats.MonadThrow
 import cats.syntax.all.*
 import domain.AKey
@@ -16,7 +15,7 @@ trait KeyOps[F[_]]:
   def updateCursorXPosition: F[Unit]
 
 object KeyOps:
-  def make[F[_]: MonadThrow: Defer: EditorConfigState]: KeyOps[F] = new:
+  def make[F[_]: MonadThrow: EditorConfigState]: KeyOps[F] = new:
     /** Deletes a character at the current cursor position.
       *
       * This method handles different scenarios:
@@ -115,6 +114,7 @@ object KeyOps:
           dirty = true // Mark the file as modified
         )
       }
+
     /** Moves the cursor based on the given arrow key input.
       *
       * @param key

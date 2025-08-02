@@ -1,7 +1,5 @@
 package domain
 
-import cats.syntax.all.*
-
 enum HighlightType:
   def color: Int
   case Normal(color: Int = 39)

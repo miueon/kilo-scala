@@ -2,12 +2,11 @@ import cats.data.StateT
 import cats.mtl.Stateful
 import domain.EditorConfig
 import domain.SyntaxConfig
-import effect.Task
-import effect.Task.given
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import services.KeyOps
 import cats.syntax.all.*
 
-import java.util.concurrent.ForkJoinPool
 import domain.EditorConfigState
 import domain.AKey
 
@@ -15,11 +14,11 @@ trait KeyOpsTestUtils:
   def defaultEditorConfig: EditorConfig
 
   def runKeyOps[A](initialConfig: EditorConfig = defaultEditorConfig)(
-      op: KeyOps[StateT[Task, EditorConfig, *]] => StateT[Task, EditorConfig, A]
+      op: KeyOps[StateT[IO, EditorConfig, *]] => StateT[IO, EditorConfig, A]
   ): (EditorConfig, A) =
-    val keyOps = KeyOps.make[StateT[Task, EditorConfig, *]]
+    val keyOps = KeyOps.make[StateT[IO, EditorConfig, *]]
     val program = for result <- op(keyOps) yield result
-    program.run(initialConfig).asIO.unsafeRunSync(ForkJoinPool())
+    program.run(initialConfig).unsafeRunSync()
 
 class KeyOpsTest extends munit.FunSuite with KeyOpsTestUtils:
   val defaultEditorConfig = EditorConfig(
@@ -41,7 +40,7 @@ class KeyOpsTest extends munit.FunSuite with KeyOpsTestUtils:
   
 
   test("insertChar") {
-    val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[Task, EditorConfig, *]]) =>
+    val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[IO, EditorConfig, *]]) =>
       for
         _ <- keyOps.insertChar('X')
         _ <- keyOps.insertChar('Y')
@@ -55,7 +54,7 @@ class KeyOpsTest extends munit.FunSuite with KeyOpsTestUtils:
   }
 
   test("insertNewline") {
-    val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[Task, EditorConfig, *]]) =>
+    val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[IO, EditorConfig, *]]) =>
       keyOps.insertNewLine.replicateA(3).void
     }
 
@@ -65,11 +64,11 @@ class KeyOpsTest extends munit.FunSuite with KeyOpsTestUtils:
   }
 
   test("deleteChar") {
-    val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[Task, EditorConfig, *]]) =>
+    val (finalConfig, _) = runKeyOps[Unit](defaultEditorConfig) { (keyOps: KeyOps[StateT[IO, EditorConfig, *]]) =>
       for
         _ <- "Hello world!".map(_.toByte).map(keyOps.insertChar).reduce((a, b) => a >> b)
         _ <- keyOps.deleteChar
-        deleteCharConfig <- EditorConfigState[StateT[Task, EditorConfig, *]].get
+        deleteCharConfig <- EditorConfigState[StateT[IO, EditorConfig, *]].get
         _ <- keyOps.moveCursor(AKey.Left)
         _ <- keyOps.moveCursor(AKey.Left)
         _ <- keyOps.moveCursor(AKey.Left)

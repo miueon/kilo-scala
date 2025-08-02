@@ -70,4 +70,6 @@ ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-core" % "2.12.0"
 ThisBuild / libraryDependencies += "com.lihaoyi" %%% "os-lib" % "0.10.2"
 ThisBuild / libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-mtl" % "1.5.0"
+ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-effect" % "3.7.0-RC1"
+ThisBuild / libraryDependencies += "org.typelevel" %%% "cats-effect-std" % "3.7.0-RC1"
 ThisBuild / libraryDependencies += "org.scalameta" %%% "munit" % "1.0.0" % Test

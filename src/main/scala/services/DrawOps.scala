@@ -22,7 +22,7 @@ object DrawOps:
         .zipWithIndex
         .foldLeft(bldr)((bldr, v) =>
           bldr ++= (v match
-            case (Some(row), idx) =>
+            case (Some(row), _) =>
               row.drawRow(config.coloff, config.screenCols) ++ appendLineBreak
             case (None, idx) =>
               (if config.rows.isEmpty && idx == (config.screenRows / 3) then

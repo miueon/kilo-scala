@@ -7,7 +7,6 @@ import cats.data.StateT
 import cats.syntax.all.*
 import domain.*
 import domain.EditorConfig.*
-import effect.Ref
 import os.Path
 import rawmode.*
 import rawmode.all.*
@@ -17,7 +16,6 @@ import domain.EditorConfigState
 import scala.scalanative.posix.sys.ioctl
 import scala.scalanative.posix.unistd
 import scala.scalanative.unsafe.*
-import scala.scalanative.unsigned.*
 import scala.util.Try
 
 trait EditorOps[F[_]]:

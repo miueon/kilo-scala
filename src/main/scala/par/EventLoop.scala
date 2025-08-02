@@ -1,40 +1,48 @@
 package par
 
 import domain.Key
-import effect.Task
-import rawmode.all.*
+import cats.effect.IO
+import cats.effect.std.Queue
+import cats.effect.std.Dispatcher
 import domain.*
 
 import scala.scalanative.posix.signal
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 import scala.scalanative.posix.unistd
-import effect.HybridQueue
 
 object SignalHandler:
-  var eventQueue: HybridQueue[Event] = null
+  var dispatcher: Dispatcher[IO] = null
+  var eventQueue: Queue[IO, Event] = null
 
-  val sigwinchHandler: CFuncPtr1[CInt, Unit] = (signo: CInt) =>
-    if eventQueue != null then eventQueue.unsafeOffer(Event.WindowResize)
+  val sigwinchHandler: CFuncPtr1[CInt, Unit] = (_: CInt) =>
+    if dispatcher != null && eventQueue != null then 
+      dispatcher.unsafeRunAndForget(
+        eventQueue.offer(Event.WindowResize).void
+      )
     ()
 
 object EventLoop:
   private final val SIGWINCH = 28 // Not in scala-native posix
 
   def create(
-      queue: HybridQueue[Event]
-  ): Task[Unit] =
-    Task {
-      SignalHandler.eventQueue = queue
-      signal.signal(SIGWINCH, SignalHandler.sigwinchHandler)
+      queue: Queue[IO, Event],
+      dispatcher: Dispatcher[IO]
+  ): IO[Unit] =
+    for
+      _ <- IO {
+        SignalHandler.eventQueue = queue
+        SignalHandler.dispatcher = dispatcher
+        signal.signal(SIGWINCH, SignalHandler.sigwinchHandler)
+      }
+      _ <- keyReaderFiber(queue).start.void
+    yield ()
 
-      val keyReader: Runnable = () =>
-        while true do
-          val key = readKey()
-          if queue != null then queue.unsafeOffer(Event.Key(key))
-      val thread = new Thread(keyReader)
-      thread.start()
-    }
+  private def keyReaderFiber(queue: Queue[IO, Event]): IO[Unit] =
+    (for
+      key <- IO.blocking(readKey())
+      _ <- queue.offer(Event.Key(key))
+    yield ()).foreverM
 
   private def readKey(): Key =
     def readUntil: Byte =

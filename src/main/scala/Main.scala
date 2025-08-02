@@ -1,10 +1,12 @@
-import `macro`.*
 import cats.Defer
 import cats.MonadThrow
 import cats.data.StateT
 import cats.syntax.all.*
+import cats.effect.*
+import cats.effect.std.Queue
+import cats.effect.std.Dispatcher
 import domain.*
-import effect.*
+import effect.LiftIO
 import rawmode.*
 import domain.EditorConfigState
 import services.EditorOps
@@ -12,12 +14,11 @@ import services.SyntaxConfigOps
 import services.KeyOps
 import par.Event
 import par.EventLoop
-import effect.HybridQueue
 
 object Main extends IOApp:
-  def program[F[_]: MonadThrow: Defer: EditorConfigState: LiftTask](
+  def program[F[_]: MonadThrow: Defer: EditorConfigState: LiftIO](
       filenameOpt: Option[String],
-      eventQueue: HybridQueue[Event]
+      eventQueue: Queue[IO, Event]
   ): F[Unit] =
     val syntaxOps = SyntaxConfigOps.make[F]
     val keyOps = KeyOps.make[F]
@@ -31,7 +32,7 @@ object Main extends IOApp:
       yield ()
 
       updateTask.flatMap { _ =>
-        LiftTask[F].lift(eventQueue.take).flatMap {
+        LiftIO[F].lift(eventQueue.take).flatMap {
           case Event.Key(k: domain.Key) =>
             EditorConfigState[F].get.flatMap { config =>
               config.promptMode
@@ -56,20 +57,20 @@ object Main extends IOApp:
     yield ()
   end program
 
-  def pureMain(args: List[String]): IO[Unit] =
+  def run(args: List[String]): IO[ExitCode] =
     (for
-      eventQueue <- Resource.eval[Task, HybridQueue[Event]](
-        HybridQueue.unbounded[Event]
+      eventQueue <- Resource.eval[IO, Queue[IO, Event]](
+        Queue.unbounded[IO, Event]
       )
-      _ <- Resource.make[Task, Unit](
-        Task.fork(EventLoop.create(eventQueue))
-      )(_ => Task.unit)
-      given MonadThrow[Task] = Task.monad
-      _ <- Resource.make[Task, TermIOS](TermIOS.enableRawMode[Task])(
-        TermIOS.disableRawMode[Task]
+      dispatcher <- Dispatcher.parallel[IO]
+      _ <- Resource.make[IO, Unit](
+        EventLoop.create(eventQueue, dispatcher).start.void
+      )(_ => IO.unit)
+      _ <- Resource.make[IO, TermIOS](TermIOS.enableRawMode[IO])(
+        TermIOS.disableRawMode[IO]
       )
-      res <- Resource.eval[Task, (EditorConfig, Unit)](
-        program[StateT[Task, EditorConfig, *]](
+      res <- Resource.eval[IO, (EditorConfig, Unit)](
+        program[StateT[IO, EditorConfig, *]](
           args.headOption,
           eventQueue
         ).run(
@@ -88,13 +89,12 @@ object Main extends IOApp:
         )
       )
     yield res)
-      .use(_ => Task.unit)
+      .use(_ => IO.unit)
       .handleErrorWith(e =>
-        EditorOps.resetScreenCursor[Task] >>
-          Task.apply(
+        EditorOps.resetScreenCursor[IO] >>
+          IO(
             printf(f"%%s\n", e.getMessage())
           )
       )
-      .asIO
-      .void
+      .as(ExitCode.Success)
 end Main
